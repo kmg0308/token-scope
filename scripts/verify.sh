@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+swift run TokenMeterSelfTest
+swift build -c release --product TokenMeter
+"$ROOT_DIR/scripts/package.sh"
+test -d "$ROOT_DIR/dist/TokenMeter.app"
+test -f "$ROOT_DIR/dist/TokenMeter-0.1.0.zip"
+test -f "$ROOT_DIR/dist/TokenMeter-0.1.0.pkg"
+test -f "$ROOT_DIR/dist/TokenMeter.app/Contents/Resources/TokenMeter.icns"
+codesign --verify --deep --strict "$ROOT_DIR/dist/TokenMeter.app"
+plutil -lint "$ROOT_DIR/dist/TokenMeter.app/Contents/Info.plist"
+pkgutil --check-signature "$ROOT_DIR/dist/TokenMeter-0.1.0.pkg" >/dev/null || true
+
+echo "verify passed"

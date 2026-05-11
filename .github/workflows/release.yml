@@ -1,0 +1,37 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build app, ZIP, and PKG
+        run: |
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          BUILD_COMMIT="${GITHUB_SHA:0:7}"
+          VERSION="$VERSION" BUILD_NUMBER="$GITHUB_RUN_NUMBER" BUILD_COMMIT="$BUILD_COMMIT" DEFAULT_REPOSITORY="$GITHUB_REPOSITORY" ./scripts/package.sh
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          TAG="v${VERSION}"
+          gh release create "$TAG" \
+            "dist/TokenMeter-${VERSION}.zip" \
+            "dist/TokenMeter-${VERSION}.pkg" \
+            --target "$GITHUB_SHA" \
+            --title "TokenMeter ${VERSION}" \
+            --notes "Automated build from main commit ${GITHUB_SHA}." \
+            --latest

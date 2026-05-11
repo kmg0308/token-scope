@@ -1,5 +1,9 @@
 # TokenMeter
 
+[![Download for macOS](https://img.shields.io/badge/Download%20for%20macOS-PKG-0A84FF?style=for-the-badge&logo=apple)](https://github.com/kmg0308/token-scope/releases/latest/download/TokenMeter.pkg)
+
+[Latest Release](https://github.com/kmg0308/token-scope/releases/latest) · [Download ZIP](https://github.com/kmg0308/token-scope/releases/latest/download/TokenMeter.zip)
+
 TokenMeter is a local-only macOS app for viewing Codex and Claude Code token usage from local log files.
 
 It does not send prompts, code, messages, or token records to any server. GitHub network calls are used only for update checks and update downloads.
@@ -37,6 +41,16 @@ The package script applies free ad-hoc signing, but it does not use a paid Apple
 
 ## Install On This Mac
 
+For the normal install flow, download the latest PKG:
+
+```text
+https://github.com/kmg0308/token-scope/releases/latest/download/TokenMeter.pkg
+```
+
+Open the installer, then launch `TokenMeter` from `/Applications`.
+
+To install from a local build instead:
+
 ```bash
 cp -R dist/TokenMeter.app /Applications/
 open /Applications/TokenMeter.app
@@ -44,10 +58,11 @@ open /Applications/TokenMeter.app
 
 ## Distribute To Another Mac
 
-1. Run `./scripts/package.sh`.
-2. Send `dist/TokenMeter-<version>.pkg` for the easiest install flow.
-3. On another Mac, double-click the PKG. It installs `TokenMeter.app` into `/Applications`.
-4. If macOS blocks the unsigned installer, install only after you trust the build or have built it locally.
+1. Open the README on the target Mac.
+2. Press `Download for macOS`.
+3. Open the downloaded PKG. It installs `TokenMeter.app` into `/Applications`.
+4. Launch `TokenMeter`.
+5. Future updates appear inside the app when a newer GitHub Release exists.
 
 The ZIP is still useful for GitHub Release updates inside TokenMeter.
 
@@ -55,11 +70,11 @@ The ZIP is still useful for GitHub Release updates inside TokenMeter.
 
 TokenMeter has an update sheet inside the app and a compact update banner on the dashboard.
 
-- Release builds embed the GitHub repository automatically. Local builds can also set it in the update sheet, for example `https://github.com/your-name/token-scope`.
+- Release builds embed the GitHub repository automatically. Local builds can also set it in the update sheet, for example `https://github.com/kmg0308/token-scope`.
 - TokenMeter checks the latest GitHub Release when the app opens and then every 6 hours while it is running.
 - If the latest Release version is newer than the installed app, the dashboard shows an update banner.
 - Press `Update Now` to download the Release ZIP, replace the current app, and relaunch.
-- The update ZIP must contain `TokenMeter.app`; source ZIP files cannot be installed inside the app.
+- The app updater uses the Release asset named `TokenMeter.zip`. Source ZIP files cannot be installed inside the app.
 
 ## Automatic Release From Main
 
@@ -68,7 +83,7 @@ The workflow at `.github/workflows/release.yml` builds and publishes release ass
 ```text
 push to main
 -> GitHub Actions builds TokenMeter.app
--> creates TokenMeter-<version>.zip and TokenMeter-<version>.pkg
+-> creates TokenMeter.zip, TokenMeter.pkg, and versioned copies
 -> publishes a GitHub Release
 -> installed apps detect the new Release
 ```

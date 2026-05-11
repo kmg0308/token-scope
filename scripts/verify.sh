@@ -10,9 +10,13 @@ swift build -c release --product TokenMeter
 test -d "$ROOT_DIR/dist/TokenMeter.app"
 test -f "$ROOT_DIR/dist/TokenMeter-0.1.0.zip"
 test -f "$ROOT_DIR/dist/TokenMeter-0.1.0.pkg"
+test -f "$ROOT_DIR/dist/TokenMeter.zip"
+test -f "$ROOT_DIR/dist/TokenMeter.pkg"
+unzip -l "$ROOT_DIR/dist/TokenMeter.zip" "TokenMeter.app/Contents/MacOS/TokenMeter" >/dev/null
 test -f "$ROOT_DIR/dist/TokenMeter.app/Contents/Resources/TokenMeter.icns"
 codesign --verify --deep --strict "$ROOT_DIR/dist/TokenMeter.app"
 plutil -lint "$ROOT_DIR/dist/TokenMeter.app/Contents/Info.plist"
 pkgutil --check-signature "$ROOT_DIR/dist/TokenMeter-0.1.0.pkg" >/dev/null || true
+pkgutil --check-signature "$ROOT_DIR/dist/TokenMeter.pkg" >/dev/null || true
 
 echo "verify passed"

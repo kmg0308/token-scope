@@ -147,13 +147,7 @@ enum UpdateService {
             throw UpdateServiceError.invalidResponse
         }
 
-        let selected = assets.first { asset in
-            let name = (asset["name"] as? String ?? "").lowercased()
-            return name.hasSuffix(".zip") && name.contains("tokenmeter")
-        } ?? assets.first { asset in
-            let name = (asset["name"] as? String ?? "").lowercased()
-            return name.hasSuffix(".zip")
-        }
+        let selected = releaseZipAsset(from: assets)
 
         guard let selected,
               let urlString = selected["browser_download_url"] as? String,
@@ -183,6 +177,24 @@ enum UpdateService {
             throw UpdateServiceError.invalidResponse
         }
         return try JSONSerialization.jsonObject(with: data)
+    }
+
+    private static func releaseZipAsset(from assets: [[String: Any]]) -> [String: Any]? {
+        assets.first { asset in
+            assetName(asset) == "tokenmeter.zip"
+        } ?? assets.first { asset in
+            let name = assetName(asset)
+            return name.hasPrefix("tokenmeter-") && name.hasSuffix(".zip")
+        } ?? assets.first { asset in
+            let name = assetName(asset)
+            return name.hasSuffix(".zip") && name.contains("tokenmeter")
+        } ?? assets.first { asset in
+            assetName(asset).hasSuffix(".zip")
+        }
+    }
+
+    private static func assetName(_ asset: [String: Any]) -> String {
+        (asset["name"] as? String ?? "").lowercased()
     }
 
     private static func download(url: URL, suggestedName: String) async throws -> URL {

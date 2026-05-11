@@ -24,7 +24,7 @@ swift build -c release --product TokenMeter
 
 BIN_DIR="$(swift build -c release --show-bin-path)"
 rm -rf "$DIST_DIR/TokenMeter.app"
-rm -f "$DIST_DIR"/TokenMeter-*.zip "$DIST_DIR"/TokenMeter-*.pkg
+rm -f "$DIST_DIR"/TokenMeter-*.zip "$DIST_DIR"/TokenMeter-*.pkg "$DIST_DIR/$APP_NAME.zip" "$DIST_DIR/$APP_NAME.pkg"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BIN_DIR/$EXECUTABLE_NAME" "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
@@ -78,11 +78,14 @@ fi
 
 ZIP_PATH="$DIST_DIR/$APP_NAME-$VERSION.zip"
 PKG_PATH="$DIST_DIR/$APP_NAME-$VERSION.pkg"
+FIXED_ZIP_PATH="$DIST_DIR/$APP_NAME.zip"
+FIXED_PKG_PATH="$DIST_DIR/$APP_NAME.pkg"
 rm -f "$ZIP_PATH"
 (
     cd "$DIST_DIR"
     ditto -c -k --norsrc --noextattr --noqtn --keepParent "$APP_NAME.app" "$ZIP_PATH"
 )
+cp "$ZIP_PATH" "$FIXED_ZIP_PATH"
 
 rm -f "$PKG_PATH"
 pkgbuild \
@@ -91,6 +94,7 @@ pkgbuild \
     --identifier "local.tokenmeter.app.pkg" \
     --version "$VERSION" \
     "$PKG_PATH" >/dev/null
+cp "$PKG_PATH" "$FIXED_PKG_PATH"
 
 cat > "$DIST_DIR/manifest.json" <<JSON
 {
@@ -99,10 +103,14 @@ cat > "$DIST_DIR/manifest.json" <<JSON
   "build": "$BUILD_NUMBER",
   "commit": "$BUILD_COMMIT",
   "zip": "$(basename "$ZIP_PATH")",
-  "pkg": "$(basename "$PKG_PATH")"
+  "pkg": "$(basename "$PKG_PATH")",
+  "latestZip": "$(basename "$FIXED_ZIP_PATH")",
+  "latestPkg": "$(basename "$FIXED_PKG_PATH")"
 }
 JSON
 
 echo "Built $APP_DIR"
 echo "Built $ZIP_PATH"
 echo "Built $PKG_PATH"
+echo "Built $FIXED_ZIP_PATH"
+echo "Built $FIXED_PKG_PATH"

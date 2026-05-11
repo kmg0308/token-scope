@@ -29,6 +29,8 @@ jobs:
           VERSION="0.1.${GITHUB_RUN_NUMBER}"
           TAG="v${VERSION}"
           gh release create "$TAG" \
+            "dist/TokenMeter.zip" \
+            "dist/TokenMeter.pkg" \
             "dist/TokenMeter-${VERSION}.zip" \
             "dist/TokenMeter-${VERSION}.pkg" \
             --target "$GITHUB_SHA" \

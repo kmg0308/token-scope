@@ -11,14 +11,6 @@ final class UpdateModel: ObservableObject {
     @Published var downloadedFile: URL?
     @Published var downloadedFileIsInstallable = false
 
-    var repositoryText: String {
-        UpdateService.defaultRepositoryText()
-    }
-
-    var repositoryURL: URL {
-        UpdateService.defaultRepositoryURL()
-    }
-
     var updateLabel: String? {
         guard let availability, availability.isAvailable else { return nil }
         return "Update \(availability.release.version)"
@@ -66,6 +58,7 @@ final class UpdateModel: ObservableObject {
     func installDownloadedUpdate() {
         do {
             guard let downloadedFile else { throw UpdateServiceError.noDownloadedFile }
+            statusText = "Preparing to install update..."
             try UpdateService.installDownloadedAppArchive(downloadedFile)
             NSApp.terminate(nil)
         } catch {

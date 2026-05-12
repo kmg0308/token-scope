@@ -42,30 +42,6 @@ struct UpdateSheetView: View {
             .background(Color.primary.opacity(0.045))
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Repository")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Image(systemName: "link")
-                        .foregroundStyle(.secondary)
-                    Text(updates.repositoryText)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Link(destination: updates.repositoryURL) {
-                        Image(systemName: "arrow.up.forward")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Open GitHub")
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color.primary.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-
             HStack(spacing: 10) {
                 if let downloadedFile = updates.downloadedFile {
                     Button("Show File") {
@@ -80,7 +56,6 @@ struct UpdateSheetView: View {
                 Button(primaryButtonTitle) {
                     runPrimaryAction()
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(primaryButtonDisabled)
             }
         }

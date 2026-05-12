@@ -4,16 +4,8 @@ struct GitHubRepository: Equatable {
     let owner: String
     let name: String
 
-    var displayName: String {
-        "\(owner)/\(name)"
-    }
-
     var apiBase: URL {
         URL(string: "https://api.github.com/repos/\(owner)/\(name)")!
-    }
-
-    var webURL: URL {
-        URL(string: "https://github.com/\(owner)/\(name)")!
     }
 }
 
@@ -80,15 +72,45 @@ enum UpdateService {
         ZIP=\(shellQuote(zipURL.path))
         TARGET=\(shellQuote(targetApp.path))
         WORK="$(/usr/bin/mktemp -d)"
+        HELPER="$WORK/install-root.zsh"
+        cleanup() {
+            /bin/rm -rf "$WORK"
+        }
+        trap cleanup EXIT
+
         /usr/bin/ditto -x -k "$ZIP" "$WORK"
         NEW_APP="$(/usr/bin/find "$WORK" -maxdepth 3 -type d -name 'TokenMeter.app' | /usr/bin/head -n 1)"
         if [[ -z "$NEW_APP" ]]; then
             /bin/echo "TokenMeter.app was not found in archive." >&2
             exit 2
         fi
-        /bin/sleep 1
+
+        /bin/cat > "$HELPER" <<'ROOTINSTALL'
+        #!/bin/zsh
+        set -euo pipefail
+        TARGET="$1"
+        NEW_APP="$2"
         /bin/rm -rf "$TARGET"
         /usr/bin/ditto "$NEW_APP" "$TARGET"
+        ROOTINSTALL
+        /bin/chmod 755 "$HELPER"
+
+        quote() {
+            /usr/bin/printf "%q" "$1"
+        }
+
+        /bin/sleep 1
+        if [[ -w "$(/usr/bin/dirname "$TARGET")" && ( ! -e "$TARGET" || -w "$TARGET" ) ]]; then
+            /bin/zsh "$HELPER" "$TARGET" "$NEW_APP"
+        else
+            COMMAND="/bin/zsh $(quote "$HELPER") $(quote "$TARGET") $(quote "$NEW_APP")"
+            APPLE_COMMAND="${COMMAND//\\\\/\\\\\\\\}"
+            APPLE_COMMAND="${APPLE_COMMAND//\\"/\\\\\\"}"
+            /usr/bin/osascript <<OSA
+        do shell script "$APPLE_COMMAND" with administrator privileges
+        OSA
+        fi
+
         /usr/bin/open "$TARGET"
         """
 
@@ -103,14 +125,6 @@ enum UpdateService {
 
     static func installedBuildCommit() -> String {
         Bundle.main.object(forInfoDictionaryKey: "TSBuildCommit") as? String ?? "dev"
-    }
-
-    static func defaultRepositoryText() -> String {
-        repository.displayName
-    }
-
-    static func defaultRepositoryURL() -> URL {
-        repository.webURL
     }
 
     static func installedVersion() -> String {

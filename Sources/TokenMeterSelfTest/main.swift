@@ -61,17 +61,27 @@ enum TokenMeterSelfTest {
     }
 
     private static func dashboardBucketOptionsStayReadable() throws {
+        let expected: [BucketInterval] = [
+            .minute,
+            .tenMinutes,
+            .twentyMinutes,
+            .thirtyMinutes,
+            .hour,
+            .day,
+            .week,
+            .month
+        ]
         try expect(
-            BucketInterval.dashboardCases(for: .last12Hours) == [.minute, .hour, .day],
-            "short ranges include minute, hour, and day views"
+            BucketInterval.dashboardCases(for: .last12Hours) == expected,
+            "short ranges expose every chart grouping"
         )
         try expect(
-            BucketInterval.dashboardCases(for: .last24Hours) == [.hour, .day],
-            "24h range avoids minute view"
+            BucketInterval.dashboardCases(for: .last24Hours) == expected,
+            "24h range exposes every chart grouping"
         )
         try expect(
-            BucketInterval.dashboardCases(for: .last12Months) == [.day],
-            "long ranges use daily view"
+            BucketInterval.dashboardCases(for: .last12Months) == expected,
+            "long ranges expose every chart grouping"
         )
     }
 

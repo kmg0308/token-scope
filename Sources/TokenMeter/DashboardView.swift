@@ -200,15 +200,19 @@ struct DashboardView: View {
                         }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .frame(width: 76)
 
-                    Picker("Token View", selection: $model.bucket) {
+                    Picker("Group", selection: $model.bucket) {
                         ForEach(BucketInterval.dashboardCases(for: model.range)) { interval in
                             Text(interval.displayName).tag(interval)
                         }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .frame(width: 112)
 
                     Toggle("Full numbers", isOn: $showFullTokenNumbers)
                         .toggleStyle(.checkbox)

@@ -32,6 +32,7 @@ for item in sizes {
 }
 
 let process = Process()
+try? fileManager.removeItem(at: outputURL)
 process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 process.arguments = ["-c", "icns", iconsetURL.path, "-o", outputURL.path]
 try process.run()
@@ -53,35 +54,38 @@ func drawIcon(size: CGFloat) -> NSImage {
     context.setShouldAntialias(true)
 
     let rect = CGRect(x: 0, y: 0, width: size, height: size)
-    let backgroundRect = rect.insetBy(dx: size * 0.012, dy: size * 0.012)
-    let radius = size * 0.22
+    let backgroundRect = rect.insetBy(dx: size * 0.004, dy: size * 0.004)
+    let radius = size * 0.225
     let background = NSBezierPath(roundedRect: backgroundRect, xRadius: radius, yRadius: radius)
-    NSColor(calibratedWhite: 0.075, alpha: 1).setFill()
+    NSColor(calibratedWhite: 0.11, alpha: 1).setFill()
     background.fill()
+    NSColor(calibratedWhite: 0.34, alpha: 0.75).setStroke()
+    background.lineWidth = max(1, size * 0.012)
+    background.stroke()
 
-    let markBounds = rect.insetBy(dx: size * 0.215, dy: size * 0.215)
+    let markBounds = rect.insetBy(dx: size * 0.17, dy: size * 0.17)
     let outer = NSBezierPath(ovalIn: markBounds)
-    let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.125, dy: size * 0.125))
+    let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.14, dy: size * 0.14))
     outer.append(inner.reversed)
     NSColor(calibratedWhite: 0.94, alpha: 1).setFill()
     outer.fill()
 
     let center = CGPoint(x: size * 0.5, y: size * 0.5)
-    let cutWidth = size * 0.12
+    let cutWidth = size * 0.13
     let verticalCut = NSBezierPath(roundedRect: CGRect(
         x: center.x - cutWidth / 2,
         y: markBounds.minY - size * 0.02,
         width: cutWidth,
         height: markBounds.height + size * 0.04
     ), xRadius: cutWidth / 2, yRadius: cutWidth / 2)
-    NSColor(calibratedWhite: 0.075, alpha: 1).setFill()
+    NSColor(calibratedWhite: 0.11, alpha: 1).setFill()
     verticalCut.fill()
 
     let token = NSBezierPath(ovalIn: CGRect(
-        x: center.x - size * 0.047,
-        y: center.y - size * 0.047,
-        width: size * 0.094,
-        height: size * 0.094
+        x: center.x - size * 0.055,
+        y: center.y - size * 0.055,
+        width: size * 0.11,
+        height: size * 0.11
     ))
     NSColor(calibratedWhite: 0.94, alpha: 1).setFill()
     token.fill()

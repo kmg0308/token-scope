@@ -41,7 +41,7 @@ final class UpdateModel: ObservableObject {
                 availability = result
                 statusText = result.isAvailable
                     ? "Version \(result.release.version) is available."
-                    : "TokenMeter is up to date."
+                    : upToDateStatusText()
             } catch {
                 statusText = error.localizedDescription
             }
@@ -87,7 +87,7 @@ final class UpdateModel: ObservableObject {
                 if result.isAvailable {
                     downloadAndInstall(release: result.release)
                 } else {
-                    statusText = "TokenMeter is up to date."
+                    statusText = upToDateStatusText()
                 }
             } catch {
                 statusText = error.localizedDescription
@@ -112,5 +112,11 @@ final class UpdateModel: ObservableObject {
                 isDownloading = false
             }
         }
+    }
+
+    private func upToDateStatusText() -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        return "TokenMeter is up to date. Checked at \(formatter.string(from: Date()))."
     }
 }

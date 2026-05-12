@@ -60,30 +60,42 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
 
 public enum BucketInterval: String, CaseIterable, Identifiable, Sendable {
     case minute = "1m"
+    case tenMinutes = "10m"
+    case twentyMinutes = "20m"
+    case thirtyMinutes = "30m"
     case hour = "1h"
     case day = "1d"
+    case week = "1w"
+    case month = "1mo"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .minute: "By Minute"
+        case .minute: "1 min"
+        case .tenMinutes: "10 min"
+        case .twentyMinutes: "20 min"
+        case .thirtyMinutes: "30 min"
         case .hour: "Hourly"
         case .day: "Daily"
+        case .week: "Weekly"
+        case .month: "Monthly"
         }
     }
 
+    public static let dashboardCases: [BucketInterval] = [
+        .minute,
+        .tenMinutes,
+        .twentyMinutes,
+        .thirtyMinutes,
+        .hour,
+        .day,
+        .week,
+        .month
+    ]
+
     public static func dashboardCases(for range: TimeRangePreset) -> [BucketInterval] {
-        switch range {
-        case .today, .last12Hours:
-            [.minute, .hour, .day]
-        case .yesterday, .last24Hours, .last7Days, .last30Days:
-            [.hour, .day]
-        case .all:
-            [.day]
-        case .last3Months, .last6Months, .last12Months:
-            [.day]
-        }
+        dashboardCases
     }
 }
 
@@ -158,11 +170,29 @@ public enum Aggregation {
         case .minute:
             let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
             return calendar.date(from: components) ?? date
+        case .tenMinutes:
+            return minuteBucket(date, size: 10, calendar: calendar)
+        case .twentyMinutes:
+            return minuteBucket(date, size: 20, calendar: calendar)
+        case .thirtyMinutes:
+            return minuteBucket(date, size: 30, calendar: calendar)
         case .hour:
             let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
             return calendar.date(from: components) ?? date
         case .day:
             return calendar.startOfDay(for: date)
+        case .week:
+            let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
+            return calendar.date(from: components) ?? date
+        case .month:
+            let components = calendar.dateComponents([.year, .month], from: date)
+            return calendar.date(from: components) ?? date
         }
+    }
+
+    private static func minuteBucket(_ date: Date, size: Int, calendar: Calendar) -> Date {
+        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        components.minute = ((components.minute ?? 0) / size) * size
+        return calendar.date(from: components) ?? date
     }
 }

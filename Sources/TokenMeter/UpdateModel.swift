@@ -8,8 +8,11 @@ final class UpdateModel: ObservableObject {
     @Published var statusText = "Ready to check for updates."
     @Published var isChecking = false
     @Published var isDownloading = false
+    @Published var isInstalling = false
     @Published var downloadedFile: URL?
     @Published var downloadedFileIsInstallable = false
+    @Published var isSheetPresented = false
+    private var autoCheckTask: Task<Void, Never>?
 
     var updateLabel: String? {
         guard let availability, availability.isAvailable else { return nil }
@@ -20,12 +23,28 @@ final class UpdateModel: ObservableObject {
         checkLatestRelease(silent: silent)
     }
 
+    func startAutoChecks() {
+        guard autoCheckTask == nil else { return }
+
+        autoCheckTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            checkIfConfigured(silent: true)
+
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 21_600_000_000_000)
+                guard !Task.isCancelled else { return }
+                checkIfConfigured(silent: true)
+            }
+        }
+    }
+
     func checkLatestRelease(silent: Bool = false) {
-        guard !isChecking, !isDownloading else { return }
+        guard !isChecking, !isDownloading, !isInstalling else { return }
 
         isChecking = true
         if !silent {
             statusText = "Checking latest release..."
+            isSheetPresented = true
         }
         Task {
             do {
@@ -58,19 +77,24 @@ final class UpdateModel: ObservableObject {
     func installDownloadedUpdate() {
         do {
             guard let downloadedFile else { throw UpdateServiceError.noDownloadedFile }
-            statusText = "Preparing to install update..."
+            isInstalling = true
+            isSheetPresented = true
+            statusText = "Installing and relaunching..."
             try UpdateService.installDownloadedAppArchive(downloadedFile)
             NSApp.terminate(nil)
         } catch {
             statusText = error.localizedDescription
+            isInstalling = false
+            isSheetPresented = true
         }
     }
 
     private func checkAndInstallLatestRelease() {
-        guard !isChecking, !isDownloading else { return }
+        guard !isChecking, !isDownloading, !isInstalling else { return }
 
         isChecking = true
         statusText = "Checking latest release..."
+        isSheetPresented = true
         Task {
             do {
                 let result = try await UpdateService.checkLatestRelease()
@@ -90,8 +114,9 @@ final class UpdateModel: ObservableObject {
     }
 
     private func downloadAndInstall(release: ReleaseInfo) {
-        guard !isDownloading else { return }
+        guard !isDownloading, !isInstalling else { return }
         isDownloading = true
+        isSheetPresented = true
         statusText = "Downloading version \(release.version)..."
         Task {
             do {

@@ -4,13 +4,11 @@ import TokenMeterCore
 struct DashboardView: View {
     @EnvironmentObject private var model: DashboardModel
     @EnvironmentObject private var updates: UpdateModel
-    @State private var showingUpdates = false
     @State private var showingFilters = false
     @State private var showingDetails = false
     @AppStorage("showFullTokenNumbers") private var showFullTokenNumbers = false
 
     private let refreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
-    private let updateCheckTimer = Timer.publish(every: 6 * 60 * 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +17,7 @@ struct DashboardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if updates.updateLabel != nil {
-                        UpdateAvailableBanner(showingUpdates: $showingUpdates)
+                        UpdateAvailableBanner()
                     }
 
                     mainSummary
@@ -44,23 +42,19 @@ struct DashboardView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .sheet(isPresented: $showingUpdates) {
+        .sheet(isPresented: $updates.isSheetPresented) {
             UpdateSheetView()
                 .environmentObject(updates)
-                .frame(width: 460)
         }
         .onReceive(refreshTimer) { _ in
             model.refresh()
-        }
-        .onReceive(updateCheckTimer) { _ in
-            updates.checkIfConfigured(silent: true)
         }
         .onChange(of: model.range) { _ in
             model.normalizeFilters()
             model.refresh()
         }
         .task {
-            updates.checkIfConfigured(silent: true)
+            updates.startAutoChecks()
         }
     }
 
@@ -98,7 +92,7 @@ struct DashboardView: View {
             .frame(width: 32)
 
             Button {
-                showingUpdates = true
+                updates.isSheetPresented = true
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: updates.updateLabel == nil ? "arrow.down.circle" : "arrow.down.circle.fill")
@@ -370,7 +364,6 @@ struct DashboardView: View {
 
 struct UpdateAvailableBanner: View {
     @EnvironmentObject private var updates: UpdateModel
-    @Binding var showingUpdates: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -379,12 +372,12 @@ struct UpdateAvailableBanner: View {
             Text(updates.statusText)
                 .font(.system(size: 13))
             Spacer()
-            Button(updates.isDownloading ? "Updating..." : "Update Now") {
+            Button(updateButtonTitle) {
                 updates.updateNow()
             }
-            .disabled(updates.isChecking || updates.isDownloading)
+            .disabled(updates.isChecking || updates.isDownloading || updates.isInstalling)
             Button("Details") {
-                showingUpdates = true
+                updates.isSheetPresented = true
             }
             .buttonStyle(.borderless)
         }
@@ -392,6 +385,16 @@ struct UpdateAvailableBanner: View {
         .padding(.vertical, 9)
         .background(Color.primary.opacity(0.055))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var updateButtonTitle: String {
+        if updates.isInstalling {
+            return "Installing..."
+        }
+        if updates.isDownloading {
+            return "Updating..."
+        }
+        return "Update Now"
     }
 }
 

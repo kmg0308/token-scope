@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct UpdateSheetView: View {
@@ -27,15 +26,15 @@ struct UpdateSheetView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    versionColumn("Installed", UpdateService.installedVersion())
+                    versionColumn("Current", UpdateService.installedVersion())
                     Divider()
-                    versionColumn("Latest", latestVersion)
+                    versionColumn("Available", availableVersionText)
                 }
 
                 Text(updates.statusText)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(14)
@@ -43,33 +42,37 @@ struct UpdateSheetView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             HStack(spacing: 10) {
-                if let downloadedFile = updates.downloadedFile {
-                    Button("Show File") {
-                        NSWorkspace.shared.activateFileViewerSelecting([downloadedFile])
-                    }
-                }
-                Spacer()
-                if updates.isChecking || updates.isDownloading {
+                if updates.isChecking || updates.isDownloading || updates.isInstalling {
                     ProgressView()
                         .scaleEffect(0.72)
                 }
-                Button(primaryButtonTitle) {
-                    runPrimaryAction()
+                Button("Check for Updates") {
+                    updates.checkLatestRelease(silent: false)
                 }
-                .disabled(primaryButtonDisabled)
+                .disabled(buttonsDisabled)
+
+                Spacer()
+
+                if updates.availability?.isAvailable == true || updates.downloadedFileIsInstallable {
+                    Button("Install and Relaunch") {
+                        updates.updateNow()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(buttonsDisabled)
+                }
             }
         }
         .padding(20)
+        .frame(width: 440)
         .onAppear {
             updates.checkIfConfigured(silent: true)
         }
     }
 
-    private var latestVersion: String {
-        updates.availability?.release.version ?? "Not checked"
-    }
-
     private var statusTitle: String {
+        if updates.isInstalling {
+            return "Installing"
+        }
         if updates.downloadedFileIsInstallable {
             return "Ready to install"
         }
@@ -82,30 +85,21 @@ struct UpdateSheetView: View {
         return "Not checked"
     }
 
+    private var availableVersionText: String {
+        guard let availability = updates.availability else {
+            return "Not checked"
+        }
+        return availability.isAvailable ? availability.release.version : "No update"
+    }
+
     private var statusColor: Color {
         updates.availability?.isAvailable == true || updates.downloadedFileIsInstallable
             ? Color.primary
             : Color.secondary
     }
 
-    private var primaryButtonTitle: String {
-        if updates.downloadedFileIsInstallable {
-            return "Install and Relaunch"
-        }
-        if updates.isChecking {
-            return "Checking..."
-        }
-        if updates.isDownloading {
-            return "Updating..."
-        }
-        if updates.availability?.isAvailable == true {
-            return "Update Now"
-        }
-        return "Check for Updates"
-    }
-
-    private var primaryButtonDisabled: Bool {
-        updates.isChecking || updates.isDownloading
+    private var buttonsDisabled: Bool {
+        updates.isChecking || updates.isDownloading || updates.isInstalling
     }
 
     private func versionColumn(_ title: String, _ value: String) -> some View {
@@ -120,15 +114,5 @@ struct UpdateSheetView: View {
                 .truncationMode(.middle)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func runPrimaryAction() {
-        if updates.downloadedFileIsInstallable {
-            updates.installDownloadedUpdate()
-        } else if updates.availability?.isAvailable == true {
-            updates.updateNow()
-        } else {
-            updates.checkLatestRelease()
-        }
     }
 }

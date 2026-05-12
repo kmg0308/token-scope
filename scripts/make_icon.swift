@@ -54,7 +54,8 @@ func drawIcon(size: CGFloat) -> NSImage {
     context.setShouldAntialias(true)
 
     let canvas = CGRect(x: 0, y: 0, width: size, height: size)
-    let tileColor = NSColor(calibratedRed: 0.08, green: 0.38, blue: 0.88, alpha: 1)
+    let tileColor = NSColor.white
+    let markColor = NSColor.black
     let tile = NSBezierPath(
         roundedRect: canvas.insetBy(dx: size * 0.01, dy: size * 0.01),
         xRadius: size * 0.22,
@@ -67,7 +68,7 @@ func drawIcon(size: CGFloat) -> NSImage {
     let outer = NSBezierPath(ovalIn: markBounds)
     let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.145, dy: size * 0.145))
     outer.append(inner.reversed)
-    NSColor.white.setFill()
+    markColor.setFill()
     outer.fill()
 
     let center = CGPoint(x: size * 0.5, y: size * 0.5)
@@ -88,7 +89,7 @@ func drawIcon(size: CGFloat) -> NSImage {
         width: tokenSize,
         height: tokenSize
     ))
-    NSColor.white.setFill()
+    markColor.setFill()
     token.fill()
 
     return image

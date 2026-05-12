@@ -53,41 +53,42 @@ func drawIcon(size: CGFloat) -> NSImage {
     context.setAllowsAntialiasing(true)
     context.setShouldAntialias(true)
 
-    let rect = CGRect(x: 0, y: 0, width: size, height: size)
-    let backgroundRect = rect.insetBy(dx: size * 0.004, dy: size * 0.004)
-    let radius = size * 0.225
-    let background = NSBezierPath(roundedRect: backgroundRect, xRadius: radius, yRadius: radius)
-    NSColor(calibratedWhite: 0.11, alpha: 1).setFill()
-    background.fill()
-    NSColor(calibratedWhite: 0.34, alpha: 0.75).setStroke()
-    background.lineWidth = max(1, size * 0.012)
-    background.stroke()
+    let canvas = CGRect(x: 0, y: 0, width: size, height: size)
+    let tileColor = NSColor(calibratedRed: 0.08, green: 0.38, blue: 0.88, alpha: 1)
+    let tile = NSBezierPath(
+        roundedRect: canvas.insetBy(dx: size * 0.01, dy: size * 0.01),
+        xRadius: size * 0.22,
+        yRadius: size * 0.22
+    )
+    tileColor.setFill()
+    tile.fill()
 
-    let markBounds = rect.insetBy(dx: size * 0.17, dy: size * 0.17)
+    let markBounds = canvas.insetBy(dx: size * 0.14, dy: size * 0.14)
     let outer = NSBezierPath(ovalIn: markBounds)
-    let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.14, dy: size * 0.14))
+    let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.145, dy: size * 0.145))
     outer.append(inner.reversed)
-    NSColor(calibratedWhite: 0.94, alpha: 1).setFill()
+    NSColor.white.setFill()
     outer.fill()
 
     let center = CGPoint(x: size * 0.5, y: size * 0.5)
-    let cutWidth = size * 0.13
+    let cutWidth = size * 0.14
     let verticalCut = NSBezierPath(roundedRect: CGRect(
         x: center.x - cutWidth / 2,
         y: markBounds.minY - size * 0.02,
         width: cutWidth,
         height: markBounds.height + size * 0.04
     ), xRadius: cutWidth / 2, yRadius: cutWidth / 2)
-    NSColor(calibratedWhite: 0.11, alpha: 1).setFill()
+    tileColor.setFill()
     verticalCut.fill()
 
+    let tokenSize = size * 0.12
     let token = NSBezierPath(ovalIn: CGRect(
-        x: center.x - size * 0.055,
-        y: center.y - size * 0.055,
-        width: size * 0.11,
-        height: size * 0.11
+        x: center.x - tokenSize / 2,
+        y: center.y - tokenSize / 2,
+        width: tokenSize,
+        height: tokenSize
     ))
-    NSColor(calibratedWhite: 0.94, alpha: 1).setFill()
+    NSColor.white.setFill()
     token.fill()
 
     return image

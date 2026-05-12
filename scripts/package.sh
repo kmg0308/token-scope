@@ -74,6 +74,8 @@ ZIP_PATH="$DIST_DIR/$APP_NAME-$VERSION.zip"
 PKG_PATH="$DIST_DIR/$APP_NAME-$VERSION.pkg"
 FIXED_ZIP_PATH="$DIST_DIR/$APP_NAME.zip"
 FIXED_PKG_PATH="$DIST_DIR/$APP_NAME.pkg"
+COMPONENT_PLIST="$DIST_DIR/$APP_NAME-component.plist"
+PKG_ROOT="$DIST_DIR/pkgroot"
 rm -f "$ZIP_PATH"
 (
     cd "$DIST_DIR"
@@ -82,12 +84,37 @@ rm -f "$ZIP_PATH"
 cp "$ZIP_PATH" "$FIXED_ZIP_PATH"
 
 rm -f "$PKG_PATH"
+cat > "$COMPONENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>BundleHasStrictIdentifier</key>
+        <true/>
+        <key>BundleIsRelocatable</key>
+        <false/>
+        <key>BundleIsVersionChecked</key>
+        <true/>
+        <key>BundleOverwriteAction</key>
+        <string>upgrade</string>
+        <key>RootRelativeBundlePath</key>
+        <string>./$APP_NAME.app</string>
+    </dict>
+</array>
+</plist>
+PLIST
+rm -rf "$PKG_ROOT"
+mkdir -p "$PKG_ROOT"
+ditto "$APP_DIR" "$PKG_ROOT/$APP_NAME.app"
 pkgbuild \
-    --component "$APP_DIR" \
+    --root "$PKG_ROOT" \
+    --component-plist "$COMPONENT_PLIST" \
     --install-location "/Applications" \
     --identifier "local.tokenmeter.app.pkg" \
     --version "$VERSION" \
     "$PKG_PATH" >/dev/null
+rm -rf "$COMPONENT_PLIST" "$PKG_ROOT"
 cp "$PKG_PATH" "$FIXED_PKG_PATH"
 
 cat > "$DIST_DIR/manifest.json" <<JSON

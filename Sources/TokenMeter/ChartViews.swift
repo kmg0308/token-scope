@@ -504,7 +504,7 @@ struct TokenBarChart: View {
             formatter.dateFormat = "HH:mm"
         case .day:
             switch range {
-            case .today, .yesterday, .last12Hours, .last24Hours:
+            case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours:
                 formatter.dateFormat = "HH:mm"
             case .last7Days:
                 formatter.dateFormat = "EEE d"

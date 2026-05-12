@@ -132,7 +132,7 @@ final class DashboardModel: ObservableObject {
     private func scanWindowStart(for range: TimeRangePreset) -> Date? {
         let interval = range.interval()
         switch range {
-        case .today, .yesterday, .last12Hours, .last24Hours, .last7Days, .last30Days:
+        case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours, .last7Days, .last30Days:
             return interval.start
         case .last3Months, .last6Months, .last12Months:
             return interval.start
@@ -143,7 +143,7 @@ final class DashboardModel: ObservableObject {
 
     private func maxFilesPerSource(for range: TimeRangePreset) -> Int? {
         switch range {
-        case .today, .yesterday, .last12Hours, .last24Hours:
+        case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours:
             return 40
         case .last7Days:
             return 120
@@ -158,7 +158,7 @@ final class DashboardModel: ObservableObject {
 
     private func maxFileBytes(for range: TimeRangePreset) -> Int? {
         switch range {
-        case .today, .yesterday, .last12Hours, .last24Hours:
+        case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours:
             return 25 * 1_024 * 1_024
         case .last7Days, .last30Days:
             return 50 * 1_024 * 1_024

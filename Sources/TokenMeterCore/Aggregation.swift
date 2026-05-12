@@ -3,6 +3,10 @@ import Foundation
 public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
     case today = "Today"
     case yesterday = "Yesterday"
+    case last30Minutes = "30m"
+    case last1Hour = "1h"
+    case last3Hours = "3h"
+    case last6Hours = "6h"
     case last12Hours = "12h"
     case last24Hours = "24h"
     case last7Days = "7d"
@@ -15,9 +19,13 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 
     public static let dashboardCases: [TimeRangePreset] = [
-        .today,
+        .last30Minutes,
+        .last1Hour,
+        .last3Hours,
+        .last6Hours,
         .last12Hours,
         .last24Hours,
+        .today,
         .last7Days,
         .last30Days,
         .last3Months,
@@ -34,6 +42,14 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
             let today = calendar.startOfDay(for: now)
             let start = calendar.date(byAdding: .day, value: -1, to: today) ?? today
             return DateInterval(start: start, end: today)
+        case .last30Minutes:
+            return DateInterval(start: now.addingTimeInterval(-30 * 60), end: now)
+        case .last1Hour:
+            return DateInterval(start: now.addingTimeInterval(-60 * 60), end: now)
+        case .last3Hours:
+            return DateInterval(start: now.addingTimeInterval(-3 * 60 * 60), end: now)
+        case .last6Hours:
+            return DateInterval(start: now.addingTimeInterval(-6 * 60 * 60), end: now)
         case .last12Hours:
             return DateInterval(start: now.addingTimeInterval(-12 * 60 * 60), end: now)
         case .last24Hours:

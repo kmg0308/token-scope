@@ -7,6 +7,7 @@ enum TokenMeterSelfTest {
         try codexParserUsesDeltasAndSkipsRepeatedTotals()
         try claudeParserDeduplicatesRequestIDs()
         try relativeDayRangesIncludeToday()
+        try dashboardRangesExposeShortOptions()
         try dashboardBucketOptionsStayReadable()
         if CommandLine.arguments.contains("--real-scan") {
             runRealScanSmokeTest()
@@ -58,6 +59,40 @@ enum TokenMeterSelfTest {
         let twelveHours = TimeRangePreset.last12Hours.interval(now: now, calendar: calendar)
         try expect(twelveHours.start == date(year: 2026, month: 5, day: 11, hour: 5, minute: 37, calendar: calendar), "12h start")
         try expect(twelveHours.end == now, "12h end")
+
+        let thirtyMinutes = TimeRangePreset.last30Minutes.interval(now: now, calendar: calendar)
+        try expect(thirtyMinutes.start == date(year: 2026, month: 5, day: 11, hour: 17, minute: 7, calendar: calendar), "30m start")
+        try expect(thirtyMinutes.end == now, "30m end")
+
+        let oneHour = TimeRangePreset.last1Hour.interval(now: now, calendar: calendar)
+        try expect(oneHour.start == date(year: 2026, month: 5, day: 11, hour: 16, minute: 37, calendar: calendar), "1h start")
+        try expect(oneHour.end == now, "1h end")
+
+        let threeHours = TimeRangePreset.last3Hours.interval(now: now, calendar: calendar)
+        try expect(threeHours.start == date(year: 2026, month: 5, day: 11, hour: 14, minute: 37, calendar: calendar), "3h start")
+        try expect(threeHours.end == now, "3h end")
+
+        let sixHours = TimeRangePreset.last6Hours.interval(now: now, calendar: calendar)
+        try expect(sixHours.start == date(year: 2026, month: 5, day: 11, hour: 11, minute: 37, calendar: calendar), "6h start")
+        try expect(sixHours.end == now, "6h end")
+    }
+
+    private static func dashboardRangesExposeShortOptions() throws {
+        let expected: [TimeRangePreset] = [
+            .last30Minutes,
+            .last1Hour,
+            .last3Hours,
+            .last6Hours,
+            .last12Hours,
+            .last24Hours,
+            .today,
+            .last7Days,
+            .last30Days,
+            .last3Months,
+            .last6Months,
+            .last12Months
+        ]
+        try expect(TimeRangePreset.dashboardCases == expected, "dashboard ranges include short options")
     }
 
     private static func dashboardBucketOptionsStayReadable() throws {

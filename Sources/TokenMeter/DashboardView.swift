@@ -194,25 +194,8 @@ struct DashboardView: View {
                 Spacer()
 
                 HStack(alignment: .center, spacing: 8) {
-                    Picker("Range", selection: $model.range) {
-                        ForEach(TimeRangePreset.dashboardCases) { preset in
-                            Text(preset.rawValue).tag(preset)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .controlSize(.small)
-                    .frame(width: 76)
-
-                    Picker("Group", selection: $model.bucket) {
-                        ForEach(BucketInterval.dashboardCases(for: model.range)) { interval in
-                            Text(interval.displayName).tag(interval)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .controlSize(.small)
-                    .frame(width: 112)
+                    rangePicker
+                    bucketPicker
 
                     Toggle("Full numbers", isOn: $showFullTokenNumbers)
                         .toggleStyle(.checkbox)
@@ -224,6 +207,79 @@ struct DashboardView: View {
             TokenBarChart(buckets: chartBuckets, range: model.range, bucketInterval: model.bucket, mode: chartMode, numberFormat: numberFormat)
                 .frame(height: 280)
         }
+    }
+
+    private var rangePicker: some View {
+        Picker("Range", selection: $model.range) {
+            Section("Recent") {
+                ForEach([
+                    TimeRangePreset.last30Minutes,
+                    .last1Hour,
+                    .last3Hours,
+                    .last6Hours,
+                    .last12Hours,
+                    .last24Hours
+                ]) { preset in
+                    Text(preset.rawValue).tag(preset)
+                }
+            }
+
+            Section("Days") {
+                ForEach([
+                    TimeRangePreset.today,
+                    .last7Days,
+                    .last30Days
+                ]) { preset in
+                    Text(preset.rawValue).tag(preset)
+                }
+            }
+
+            Section("Months") {
+                ForEach([
+                    TimeRangePreset.last3Months,
+                    .last6Months,
+                    .last12Months
+                ]) { preset in
+                    Text(preset.rawValue).tag(preset)
+                }
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .frame(width: 76)
+        .help("Time range")
+    }
+
+    private var bucketPicker: some View {
+        Picker("Group", selection: $model.bucket) {
+            Section("Minutes") {
+                ForEach([
+                    BucketInterval.minute,
+                    .tenMinutes,
+                    .twentyMinutes,
+                    .thirtyMinutes
+                ]) { interval in
+                    Text(interval.displayName).tag(interval)
+                }
+            }
+
+            Section("Larger") {
+                ForEach([
+                    BucketInterval.hour,
+                    .day,
+                    .week,
+                    .month
+                ]) { interval in
+                    Text(interval.displayName).tag(interval)
+                }
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .frame(width: 112)
+        .help("Chart grouping")
     }
 
     private var chartBuckets: [TimeBucket] {

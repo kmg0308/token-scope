@@ -234,19 +234,13 @@ struct TokenBarChart: View {
     }
 
     private var minTickSpacing: CGFloat {
-        switch bucketInterval.resolved(for: range) {
-        case .minute, .fiveMinutes, .fifteenMinutes:
-            return 58
+        switch bucketInterval {
+        case .minute:
+            return 64
         case .hour:
             return 58
         case .day:
             return range == .last7Days ? 54 : 64
-        case .week:
-            return 70
-        case .month:
-            return 76
-        case .automatic:
-            return 64
         }
     }
 
@@ -259,7 +253,7 @@ struct TokenBarChart: View {
         let sorted = buckets.sorted { $0.start < $1.start }
         guard let first = sorted.first else { return [] }
 
-        let interval = bucketInterval.resolved(for: range)
+        let interval = bucketInterval
         let calendar = Calendar.current
         let rangeInterval = range.interval(calendar: calendar, earliest: first.start)
         let start = bucketStart(for: rangeInterval.start, interval: interval, calendar: calendar)
@@ -270,7 +264,7 @@ struct TokenBarChart: View {
         var current = start
         var guardCount = 0
 
-        while current <= end && guardCount < 400 {
+        while current <= end && guardCount < maxVisibleBucketCount(for: interval) {
             result.append(existing[current] ?? TimeBucket(start: current, usage: .zero, sourceUsage: [:]))
             guard let next = nextBucket(after: current, interval: interval, calendar: calendar),
                   next > current else {
@@ -285,54 +279,37 @@ struct TokenBarChart: View {
 
     private func bucketStart(for date: Date, interval: BucketInterval, calendar: Calendar) -> Date {
         switch interval {
-        case .automatic:
-            return bucketStart(for: date, interval: .hour, calendar: calendar)
         case .minute:
             let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
             return calendar.date(from: components) ?? date
-        case .fiveMinutes:
-            return minuteBucket(date, size: 5, calendar: calendar)
-        case .fifteenMinutes:
-            return minuteBucket(date, size: 15, calendar: calendar)
         case .hour:
             let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
             return calendar.date(from: components) ?? date
         case .day:
             return calendar.startOfDay(for: date)
-        case .week:
-            let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
-            return calendar.date(from: components) ?? date
-        case .month:
-            let components = calendar.dateComponents([.year, .month], from: date)
-            return calendar.date(from: components) ?? date
         }
     }
 
     private func nextBucket(after date: Date, interval: BucketInterval, calendar: Calendar) -> Date? {
         switch interval {
-        case .automatic:
-            return calendar.date(byAdding: .hour, value: 1, to: date)
         case .minute:
             return calendar.date(byAdding: .minute, value: 1, to: date)
-        case .fiveMinutes:
-            return calendar.date(byAdding: .minute, value: 5, to: date)
-        case .fifteenMinutes:
-            return calendar.date(byAdding: .minute, value: 15, to: date)
         case .hour:
             return calendar.date(byAdding: .hour, value: 1, to: date)
         case .day:
             return calendar.date(byAdding: .day, value: 1, to: date)
-        case .week:
-            return calendar.date(byAdding: .weekOfYear, value: 1, to: date)
-        case .month:
-            return calendar.date(byAdding: .month, value: 1, to: date)
         }
     }
 
-    private func minuteBucket(_ date: Date, size: Int, calendar: Calendar) -> Date {
-        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-        components.minute = ((components.minute ?? 0) / size) * size
-        return calendar.date(from: components) ?? date
+    private func maxVisibleBucketCount(for interval: BucketInterval) -> Int {
+        switch interval {
+        case .minute:
+            return 1_500
+        case .hour:
+            return 800
+        case .day:
+            return 400
+        }
     }
 
     private func barWidth(slotWidth: CGFloat, count: Int) -> CGFloat {
@@ -346,7 +323,13 @@ struct TokenBarChart: View {
         if count <= 60 {
             return min(14, max(4, slotWidth * 0.65))
         }
-        return min(9, max(2, slotWidth * 0.72))
+        if count <= 180 {
+            return min(9, max(2, slotWidth * 0.72))
+        }
+        if count <= 800 {
+            return min(4, max(1, slotWidth * 0.78))
+        }
+        return min(3, max(0.6, slotWidth * 0.82))
     }
 
     private var tooltipWidth: CGFloat {
@@ -409,8 +392,8 @@ struct TokenBarChart: View {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
 
-        switch bucketInterval.resolved(for: range) {
-        case .minute, .fiveMinutes, .fifteenMinutes, .hour:
+        switch bucketInterval {
+        case .minute, .hour:
             formatter.dateFormat = "HH:mm"
         case .day:
             switch range {
@@ -421,17 +404,6 @@ struct TokenBarChart: View {
             case .last30Days, .last3Months, .last6Months, .last12Months, .all:
                 formatter.dateFormat = "MMM d"
             }
-        case .week:
-            formatter.dateFormat = "MMM d"
-        case .month:
-            switch range {
-            case .last3Months, .last6Months, .last12Months, .all:
-                formatter.dateFormat = "MMM yyyy"
-            default:
-                formatter.dateFormat = "MMM"
-            }
-        case .automatic:
-            formatter.dateFormat = "MMM d"
         }
 
         return formatter.string(from: date)

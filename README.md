@@ -13,7 +13,7 @@ It does not send prompts, code, messages, or token records to any server. GitHub
 - Main macOS dashboard app with Dock and Cmd+Tab support.
 - Dashboard sections: All, Codex, Claude Code.
 - Time ranges: today, last 12 hours, last 24 hours, 7 days, 30 days, 3/6/12 months.
-- Bucket sizes: auto, 1 minute, 5 minutes, 15 minutes, 1 hour, 1 day, 1 week, 1 month.
+- Token views: by minute for short ranges, hourly for medium ranges, and daily for every dashboard range.
 - Breakdowns by app, token kind, model, project, and session.
 - Local parsing for:
   - `~/.codex/sessions/**/*.jsonl`
@@ -70,7 +70,7 @@ The ZIP is still useful for GitHub Release updates inside TokenMeter.
 
 TokenMeter has an update sheet inside the app and a compact update banner on the dashboard.
 
-- Release builds embed the GitHub repository automatically. Local builds can also set it in the update sheet, for example `https://github.com/kmg0308/token-scope`.
+- Updates use the fixed `kmg0308/token-scope` GitHub Releases source.
 - TokenMeter checks the latest GitHub Release when the app opens and then every 6 hours while it is running.
 - If the latest Release version is newer than the installed app, the dashboard shows an update banner.
 - Press `Update Now` to download the Release ZIP, replace the current app, and relaunch.

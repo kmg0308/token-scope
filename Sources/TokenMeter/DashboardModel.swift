@@ -91,7 +91,7 @@ final class DashboardModel: ObservableObject {
     }
 
     var timeBuckets: [TimeBucket] {
-        Aggregation.buckets(events: filteredEvents, range: range, bucket: bucket)
+        Aggregation.buckets(events: filteredEvents, bucket: bucket)
     }
 
     var projectRows: [GroupedUsageRow] {

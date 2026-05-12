@@ -59,53 +59,30 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum BucketInterval: String, CaseIterable, Identifiable, Sendable {
-    case automatic = "Auto"
     case minute = "1m"
-    case fiveMinutes = "5m"
-    case fifteenMinutes = "15m"
     case hour = "1h"
     case day = "1d"
-    case week = "1w"
-    case month = "1mo"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .automatic: "Auto"
-        case .minute: "Minute"
-        case .fiveMinutes: "5 minutes"
-        case .fifteenMinutes: "15 minutes"
+        case .minute: "By Minute"
         case .hour: "Hourly"
         case .day: "Daily"
-        case .week: "Weekly"
-        case .month: "Monthly"
         }
     }
 
     public static func dashboardCases(for range: TimeRangePreset) -> [BucketInterval] {
         switch range {
-        case .today, .last12Hours, .last24Hours:
-            [.hour, .day]
-        case .last7Days, .last30Days:
-            [.day, .month]
-        case .last3Months, .last6Months, .last12Months:
-            [.month, .day]
-        case .yesterday:
+        case .today, .last12Hours:
+            [.minute, .hour, .day]
+        case .yesterday, .last24Hours, .last7Days, .last30Days:
             [.hour, .day]
         case .all:
-            [.month]
-        }
-    }
-
-    public func resolved(for range: TimeRangePreset) -> BucketInterval {
-        guard self == .automatic else { return self }
-        switch range {
-        case .today, .yesterday, .last12Hours, .last24Hours: return .hour
-        case .last7Days: return .day
-        case .last30Days: return .day
-        case .last3Months, .last6Months: return .week
-        case .last12Months, .all: return .month
+            [.day]
+        case .last3Months, .last6Months, .last12Months:
+            [.day]
         }
     }
 }
@@ -137,15 +114,13 @@ public enum Aggregation {
 
     public static func buckets(
         events: [TokenEvent],
-        range: TimeRangePreset,
         bucket: BucketInterval,
         calendar: Calendar = .current
     ) -> [TimeBucket] {
-        let interval = bucket.resolved(for: range)
         var grouped: [Date: [TokenSource: TokenUsage]] = [:]
 
         for event in events {
-            let start = bucketStart(for: event.timestamp, interval: interval, calendar: calendar)
+            let start = bucketStart(for: event.timestamp, interval: bucket, calendar: calendar)
             var sourceUsage = grouped[start, default: [:]]
             sourceUsage[event.source] = (sourceUsage[event.source] ?? .zero).adding(event.usage)
             grouped[start] = sourceUsage
@@ -180,32 +155,14 @@ public enum Aggregation {
 
     private static func bucketStart(for date: Date, interval: BucketInterval, calendar: Calendar) -> Date {
         switch interval {
-        case .automatic:
-            return bucketStart(for: date, interval: .hour, calendar: calendar)
         case .minute:
             let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
             return calendar.date(from: components) ?? date
-        case .fiveMinutes:
-            return minuteBucket(date, size: 5, calendar: calendar)
-        case .fifteenMinutes:
-            return minuteBucket(date, size: 15, calendar: calendar)
         case .hour:
             let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
             return calendar.date(from: components) ?? date
         case .day:
             return calendar.startOfDay(for: date)
-        case .week:
-            let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
-            return calendar.date(from: components) ?? date
-        case .month:
-            let components = calendar.dateComponents([.year, .month], from: date)
-            return calendar.date(from: components) ?? date
         }
-    }
-
-    private static func minuteBucket(_ date: Date, size: Int, calendar: Calendar) -> Date {
-        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-        components.minute = ((components.minute ?? 0) / size) * size
-        return calendar.date(from: components) ?? date
     }
 }

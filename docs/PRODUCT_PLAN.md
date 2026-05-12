@@ -64,10 +64,10 @@ The visual design is intentionally plain:
 
 TokenMeter supports a practical no-paid-account update path:
 
-- Check the configured GitHub repository's latest Release.
+- Check the fixed `kmg0308/token-scope` GitHub repository's latest Release.
 - Download the latest Release ZIP when available.
 - Install and relaunch when the downloaded ZIP contains `TokenMeter.app`.
 - A GitHub Actions workflow publishes a new Release from each main push.
-- Installed apps check the latest Release on launch when a repository is configured.
+- Installed apps check the latest Release on launch.
 
 Sparkle is documented as a future option for fully automatic app replacement.

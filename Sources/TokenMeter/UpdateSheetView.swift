@@ -4,7 +4,6 @@ import SwiftUI
 struct UpdateSheetView: View {
     @EnvironmentObject private var updates: UpdateModel
     @Environment(\.dismiss) private var dismiss
-    @State private var repositoryText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -47,12 +46,24 @@ struct UpdateSheetView: View {
                 Text("Repository")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                TextField("owner/repository or GitHub URL", text: $repositoryText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        saveRepository()
-                        updates.checkLatestRelease()
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .foregroundStyle(.secondary)
+                    Text(updates.repositoryText)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Link(destination: updates.repositoryURL) {
+                        Image(systemName: "arrow.up.forward")
                     }
+                    .buttonStyle(.borderless)
+                    .help("Open GitHub")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
             HStack(spacing: 10) {
@@ -75,7 +86,6 @@ struct UpdateSheetView: View {
         }
         .padding(20)
         .onAppear {
-            repositoryText = updates.repositoryText
             updates.checkIfConfigured(silent: true)
         }
     }
@@ -120,7 +130,7 @@ struct UpdateSheetView: View {
     }
 
     private var primaryButtonDisabled: Bool {
-        updates.isChecking || updates.isDownloading || repositoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updates.isChecking || updates.isDownloading
     }
 
     private func versionColumn(_ title: String, _ value: String) -> some View {
@@ -138,7 +148,6 @@ struct UpdateSheetView: View {
     }
 
     private func runPrimaryAction() {
-        saveRepository()
         if updates.downloadedFileIsInstallable {
             updates.installDownloadedUpdate()
         } else if updates.availability?.isAvailable == true {
@@ -146,9 +155,5 @@ struct UpdateSheetView: View {
         } else {
             updates.checkLatestRelease()
         }
-    }
-
-    private func saveRepository() {
-        updates.repositoryText = repositoryText
     }
 }

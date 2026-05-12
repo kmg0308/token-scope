@@ -7,6 +7,7 @@ enum TokenMeterSelfTest {
         try codexParserUsesDeltasAndSkipsRepeatedTotals()
         try claudeParserDeduplicatesRequestIDs()
         try relativeDayRangesIncludeToday()
+        try dashboardBucketOptionsStayReadable()
         if CommandLine.arguments.contains("--real-scan") {
             runRealScanSmokeTest()
         }
@@ -57,6 +58,21 @@ enum TokenMeterSelfTest {
         let twelveHours = TimeRangePreset.last12Hours.interval(now: now, calendar: calendar)
         try expect(twelveHours.start == date(year: 2026, month: 5, day: 11, hour: 5, minute: 37, calendar: calendar), "12h start")
         try expect(twelveHours.end == now, "12h end")
+    }
+
+    private static func dashboardBucketOptionsStayReadable() throws {
+        try expect(
+            BucketInterval.dashboardCases(for: .last12Hours) == [.minute, .hour, .day],
+            "short ranges include minute, hour, and day views"
+        )
+        try expect(
+            BucketInterval.dashboardCases(for: .last24Hours) == [.hour, .day],
+            "24h range avoids minute view"
+        )
+        try expect(
+            BucketInterval.dashboardCases(for: .last12Months) == [.day],
+            "long ranges use daily view"
+        )
     }
 
     private static func temporaryFile(_ content: String) -> URL {

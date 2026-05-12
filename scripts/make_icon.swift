@@ -53,20 +53,21 @@ func drawIcon(size: CGFloat) -> NSImage {
     context.setShouldAntialias(true)
 
     let rect = CGRect(x: 0, y: 0, width: size, height: size)
-    let radius = size * 0.225
-    let background = NSBezierPath(roundedRect: rect.insetBy(dx: size * 0.045, dy: size * 0.045), xRadius: radius, yRadius: radius)
+    let backgroundRect = rect.insetBy(dx: size * 0.012, dy: size * 0.012)
+    let radius = size * 0.22
+    let background = NSBezierPath(roundedRect: backgroundRect, xRadius: radius, yRadius: radius)
     NSColor(calibratedWhite: 0.075, alpha: 1).setFill()
     background.fill()
 
-    let markBounds = rect.insetBy(dx: size * 0.24, dy: size * 0.24)
+    let markBounds = rect.insetBy(dx: size * 0.215, dy: size * 0.215)
     let outer = NSBezierPath(ovalIn: markBounds)
-    let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.115, dy: size * 0.115))
+    let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.125, dy: size * 0.125))
     outer.append(inner.reversed)
     NSColor(calibratedWhite: 0.94, alpha: 1).setFill()
     outer.fill()
 
     let center = CGPoint(x: size * 0.5, y: size * 0.5)
-    let cutWidth = size * 0.112
+    let cutWidth = size * 0.12
     let verticalCut = NSBezierPath(roundedRect: CGRect(
         x: center.x - cutWidth / 2,
         y: markBounds.minY - size * 0.02,

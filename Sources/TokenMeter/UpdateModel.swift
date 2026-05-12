@@ -5,25 +5,18 @@ import SwiftUI
 @MainActor
 final class UpdateModel: ObservableObject {
     @Published var availability: UpdateAvailability?
-    @Published var statusText = "Set a GitHub repository to enable update checks."
+    @Published var statusText = "Ready to check for updates."
     @Published var isChecking = false
     @Published var isDownloading = false
     @Published var downloadedFile: URL?
     @Published var downloadedFileIsInstallable = false
 
     var repositoryText: String {
-        get {
-            let stored = UserDefaults.standard.string(forKey: "githubRepository") ?? ""
-            if !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return stored
-            }
-            return UpdateService.defaultRepositoryText()
-        }
-        set { UserDefaults.standard.set(newValue, forKey: "githubRepository") }
+        UpdateService.defaultRepositoryText()
     }
 
-    var hasRepository: Bool {
-        UpdateService.parseRepository(repositoryText) != nil
+    var repositoryURL: URL {
+        UpdateService.defaultRepositoryURL()
     }
 
     var updateLabel: String? {
@@ -32,17 +25,11 @@ final class UpdateModel: ObservableObject {
     }
 
     func checkIfConfigured(silent: Bool = false) {
-        guard hasRepository else { return }
         checkLatestRelease(silent: silent)
     }
 
     func checkLatestRelease(silent: Bool = false) {
         guard !isChecking, !isDownloading else { return }
-        guard let repository = UpdateService.parseRepository(repositoryText) else {
-            statusText = "Set a valid GitHub repository first."
-            availability = nil
-            return
-        }
 
         isChecking = true
         if !silent {
@@ -50,7 +37,7 @@ final class UpdateModel: ObservableObject {
         }
         Task {
             do {
-                let result = try await UpdateService.checkLatestRelease(repository: repository)
+                let result = try await UpdateService.checkLatestRelease()
                 availability = result
                 statusText = result.isAvailable
                     ? "Version \(result.release.version) is available."
@@ -62,11 +49,7 @@ final class UpdateModel: ObservableObject {
         }
     }
 
-    func updateNow(repositoryText newRepositoryText: String? = nil) {
-        if let newRepositoryText {
-            repositoryText = newRepositoryText
-        }
-
+    func updateNow() {
         if downloadedFileIsInstallable {
             installDownloadedUpdate()
             return
@@ -92,17 +75,12 @@ final class UpdateModel: ObservableObject {
 
     private func checkAndInstallLatestRelease() {
         guard !isChecking, !isDownloading else { return }
-        guard let repository = UpdateService.parseRepository(repositoryText) else {
-            statusText = "Set a valid GitHub repository first."
-            availability = nil
-            return
-        }
 
         isChecking = true
         statusText = "Checking latest release..."
         Task {
             do {
-                let result = try await UpdateService.checkLatestRelease(repository: repository)
+                let result = try await UpdateService.checkLatestRelease()
                 availability = result
                 isChecking = false
 

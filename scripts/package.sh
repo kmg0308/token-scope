@@ -7,13 +7,7 @@ EXECUTABLE_NAME="TokenMeter"
 VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 BUILD_COMMIT="${BUILD_COMMIT:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo dev)}"
-DEFAULT_REPOSITORY="${DEFAULT_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
-if [[ -z "$DEFAULT_REPOSITORY" ]]; then
-    ORIGIN_URL="$(git -C "$ROOT_DIR" config --get remote.origin.url 2>/dev/null || true)"
-    if [[ "$ORIGIN_URL" =~ github.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
-        DEFAULT_REPOSITORY="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-    fi
-fi
+DEFAULT_REPOSITORY="kmg0308/token-scope"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 

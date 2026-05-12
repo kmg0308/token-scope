@@ -4,12 +4,16 @@ struct GitHubRepository: Equatable {
     let owner: String
     let name: String
 
+    var displayName: String {
+        "\(owner)/\(name)"
+    }
+
     var apiBase: URL {
         URL(string: "https://api.github.com/repos/\(owner)/\(name)")!
     }
 
-    var sourceZipURL: URL {
-        URL(string: "https://codeload.github.com/\(owner)/\(name)/zip/refs/heads/main")!
+    var webURL: URL {
+        URL(string: "https://github.com/\(owner)/\(name)")!
     }
 }
 
@@ -37,15 +41,12 @@ struct UpdateAvailability: Equatable {
 }
 
 enum UpdateServiceError: LocalizedError {
-    case invalidRepository
     case invalidResponse
     case noDownloadURL
     case noDownloadedFile
 
     var errorDescription: String? {
         switch self {
-        case .invalidRepository:
-            "GitHub repository URL is invalid."
         case .invalidResponse:
             "GitHub returned an invalid response."
         case .noDownloadURL:
@@ -57,23 +58,9 @@ enum UpdateServiceError: LocalizedError {
 }
 
 enum UpdateService {
-    static func parseRepository(_ text: String) -> GitHubRepository? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ".git", with: "")
-        if trimmed.isEmpty { return nil }
+    static let repository = GitHubRepository(owner: "kmg0308", name: "token-scope")
 
-        if let url = URL(string: trimmed), let host = url.host, host.contains("github.com") {
-            let parts = url.path.split(separator: "/").map(String.init)
-            guard parts.count >= 2 else { return nil }
-            return GitHubRepository(owner: parts[0], name: parts[1])
-        }
-
-        let parts = trimmed.split(separator: "/").map(String.init)
-        guard parts.count == 2 else { return nil }
-        return GitHubRepository(owner: parts[0], name: parts[1])
-    }
-
-    static func checkLatestRelease(repository: GitHubRepository) async throws -> UpdateAvailability {
+    static func checkLatestRelease() async throws -> UpdateAvailability {
         let release = try await latestRelease(repository: repository)
         return UpdateAvailability(currentVersion: installedVersion(), release: release)
     }
@@ -119,7 +106,11 @@ enum UpdateService {
     }
 
     static func defaultRepositoryText() -> String {
-        Bundle.main.object(forInfoDictionaryKey: "TSGitHubRepository") as? String ?? ""
+        repository.displayName
+    }
+
+    static func defaultRepositoryURL() -> URL {
+        repository.webURL
     }
 
     static func installedVersion() -> String {

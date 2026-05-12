@@ -202,7 +202,7 @@ struct DashboardView: View {
                     .labelsHidden()
                     .fixedSize()
 
-                    Picker("Bucket", selection: $model.bucket) {
+                    Picker("Token View", selection: $model.bucket) {
                         ForEach(BucketInterval.dashboardCases(for: model.range)) { interval in
                             Text(interval.displayName).tag(interval)
                         }
@@ -227,9 +227,9 @@ struct DashboardView: View {
         case .all:
             model.timeBuckets
         case .codex:
-            Aggregation.buckets(events: model.filteredEvents(source: .codex), range: model.range, bucket: model.bucket)
+            Aggregation.buckets(events: model.filteredEvents(source: .codex), bucket: model.bucket)
         case .claude:
-            Aggregation.buckets(events: model.filteredEvents(source: .claude), range: model.range, bucket: model.bucket)
+            Aggregation.buckets(events: model.filteredEvents(source: .claude), bucket: model.bucket)
         }
     }
 

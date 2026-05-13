@@ -186,18 +186,19 @@ enum UpdateService {
         ROOTINSTALL
         /bin/chmod 755 "$HELPER"
 
-        quote() {
-            /usr/bin/printf "%q" "$1"
-        }
-
         if [[ -w "$TARGET_PARENT" && ( ! -e "$TARGET" || -w "$TARGET" ) ]]; then
             /bin/zsh "$HELPER" "$APP_PID" "$TARGET" "$TMP_TARGET" "$OLD_TARGET"
         else
-            COMMAND="/bin/zsh $(quote "$HELPER") $(quote "$APP_PID") $(quote "$TARGET") $(quote "$TMP_TARGET") $(quote "$OLD_TARGET")"
-            APPLE_COMMAND="${COMMAND//\\\\/\\\\\\\\}"
-            APPLE_COMMAND="${APPLE_COMMAND//\\"/\\\\\\"}"
-            /usr/bin/osascript <<OSA
-        do shell script "$APPLE_COMMAND" with administrator privileges
+            /usr/bin/osascript - "$HELPER" "$APP_PID" "$TARGET" "$TMP_TARGET" "$OLD_TARGET" <<'OSA'
+        on run argv
+            set helperPath to item 1 of argv
+            set appPID to item 2 of argv
+            set targetPath to item 3 of argv
+            set tmpTargetPath to item 4 of argv
+            set oldTargetPath to item 5 of argv
+            set commandText to "/bin/zsh " & quoted form of helperPath & " " & quoted form of appPID & " " & quoted form of targetPath & " " & quoted form of tmpTargetPath & " " & quoted form of oldTargetPath
+            do shell script commandText with administrator privileges
+        end run
         OSA
         fi
 

@@ -76,6 +76,7 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
 
 public enum BucketInterval: String, CaseIterable, Identifiable, Sendable {
     case minute = "1m"
+    case fiveMinutes = "5m"
     case tenMinutes = "10m"
     case twentyMinutes = "20m"
     case thirtyMinutes = "30m"
@@ -89,6 +90,7 @@ public enum BucketInterval: String, CaseIterable, Identifiable, Sendable {
     public var displayName: String {
         switch self {
         case .minute: "1 min"
+        case .fiveMinutes: "5 min"
         case .tenMinutes: "10 min"
         case .twentyMinutes: "20 min"
         case .thirtyMinutes: "30 min"
@@ -101,6 +103,7 @@ public enum BucketInterval: String, CaseIterable, Identifiable, Sendable {
 
     public static let dashboardCases: [BucketInterval] = [
         .minute,
+        .fiveMinutes,
         .tenMinutes,
         .twentyMinutes,
         .thirtyMinutes,
@@ -186,6 +189,8 @@ public enum Aggregation {
         case .minute:
             let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
             return calendar.date(from: components) ?? date
+        case .fiveMinutes:
+            return minuteBucket(date, size: 5, calendar: calendar)
         case .tenMinutes:
             return minuteBucket(date, size: 10, calendar: calendar)
         case .twentyMinutes:

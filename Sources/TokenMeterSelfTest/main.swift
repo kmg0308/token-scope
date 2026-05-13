@@ -7,6 +7,7 @@ enum TokenMeterSelfTest {
         try codexParserUsesDeltasAndSkipsRepeatedTotals()
         try claudeParserDeduplicatesRequestIDs()
         try relativeDayRangesIncludeToday()
+        try fiveMinuteBucketsRoundDown()
         try dashboardRangesExposeShortOptions()
         try dashboardBucketOptionsStayReadable()
         if CommandLine.arguments.contains("--real-scan") {
@@ -95,9 +96,30 @@ enum TokenMeterSelfTest {
         try expect(TimeRangePreset.dashboardCases == expected, "dashboard ranges include short options")
     }
 
+    private static func fiveMinuteBucketsRoundDown() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let events = [
+            event(id: "a", timestamp: date(year: 2026, month: 5, day: 11, hour: 17, minute: 7, calendar: calendar), total: 10),
+            event(id: "b", timestamp: date(year: 2026, month: 5, day: 11, hour: 17, minute: 9, calendar: calendar), total: 20),
+            event(id: "c", timestamp: date(year: 2026, month: 5, day: 11, hour: 17, minute: 11, calendar: calendar), total: 30)
+        ]
+
+        let buckets = Aggregation.buckets(events: events, bucket: .fiveMinutes, calendar: calendar)
+        try expect(
+            buckets.map(\.start) == [
+                date(year: 2026, month: 5, day: 11, hour: 17, minute: 5, calendar: calendar),
+                date(year: 2026, month: 5, day: 11, hour: 17, minute: 10, calendar: calendar)
+            ],
+            "5m bucket starts"
+        )
+        try expect(buckets.map(\.usage.total) == [30, 30], "5m bucket totals")
+    }
+
     private static func dashboardBucketOptionsStayReadable() throws {
         let expected: [BucketInterval] = [
             .minute,
+            .fiveMinutes,
             .tenMinutes,
             .twentyMinutes,
             .thirtyMinutes,
@@ -139,6 +161,16 @@ enum TokenMeterSelfTest {
         components.hour = hour
         components.minute = minute
         return calendar.date(from: components)!
+    }
+
+    private static func event(id: String, timestamp: Date, total: Int) -> TokenEvent {
+        TokenEvent(
+            id: id,
+            source: .codex,
+            timestamp: timestamp,
+            usage: TokenUsage(total: total),
+            rawFilePath: "/tmp/\(id).jsonl"
+        )
     }
 
     private static func expect(_ condition: Bool, _ name: String) throws {

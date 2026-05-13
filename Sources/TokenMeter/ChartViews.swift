@@ -273,7 +273,7 @@ struct TokenBarChart: View {
 
     private var minTickSpacing: CGFloat {
         switch bucketInterval {
-        case .minute, .tenMinutes, .twentyMinutes, .thirtyMinutes:
+        case .minute, .fiveMinutes, .tenMinutes, .twentyMinutes, .thirtyMinutes:
             return 64
         case .hour:
             return 58
@@ -357,6 +357,8 @@ struct TokenBarChart: View {
         case .minute:
             let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
             return calendar.date(from: components) ?? date
+        case .fiveMinutes:
+            return minuteBucket(date, size: 5, calendar: calendar)
         case .tenMinutes:
             return minuteBucket(date, size: 10, calendar: calendar)
         case .twentyMinutes:
@@ -381,6 +383,8 @@ struct TokenBarChart: View {
         switch interval {
         case .minute:
             return calendar.date(byAdding: .minute, value: 1, to: date)
+        case .fiveMinutes:
+            return calendar.date(byAdding: .minute, value: 5, to: date)
         case .tenMinutes:
             return calendar.date(byAdding: .minute, value: 10, to: date)
         case .twentyMinutes:
@@ -400,7 +404,7 @@ struct TokenBarChart: View {
 
     private func maxVisibleBucketCount(for interval: BucketInterval) -> Int {
         switch interval {
-        case .minute, .tenMinutes, .twentyMinutes, .thirtyMinutes:
+        case .minute, .fiveMinutes, .tenMinutes, .twentyMinutes, .thirtyMinutes:
             return 2_000
         case .hour:
             return 800
@@ -500,7 +504,7 @@ struct TokenBarChart: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
 
         switch bucketInterval {
-        case .minute, .tenMinutes, .twentyMinutes, .thirtyMinutes, .hour:
+        case .minute, .fiveMinutes, .tenMinutes, .twentyMinutes, .thirtyMinutes, .hour:
             formatter.dateFormat = "HH:mm"
         case .day:
             switch range {

@@ -250,6 +250,7 @@ struct DashboardView: View {
             Section("Minutes") {
                 ForEach([
                     BucketInterval.minute,
+                    .fiveMinutes,
                     .tenMinutes,
                     .twentyMinutes,
                     .thirtyMinutes

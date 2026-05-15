@@ -22,8 +22,8 @@ enum DashboardSection: String, CaseIterable, Identifiable {
 final class DashboardModel: ObservableObject {
     @Published var scanResult = ScanResult()
     @Published var selectedSection: DashboardSection = .all
-    @Published var range: TimeRangePreset = .last30Days
-    @Published var bucket: BucketInterval = .day
+    @Published var range: TimeRangePreset = .last24Hours
+    @Published var bucket: BucketInterval = .twentyMinutes
     @Published var projectFilter = "All Projects"
     @Published var modelFilter = "All Models"
     @Published var isScanning = false

@@ -30,24 +30,40 @@ final class DashboardModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let scanner = TokenLogScanner()
+    private var scanTask: Task<Void, Never>?
+    private var scanGeneration = 0
 
     init() {
         refresh()
     }
 
-    func refresh() {
-        guard !isScanning else { return }
+    func refresh(restartInProgress: Bool = false) {
+        if isScanning {
+            guard restartInProgress else { return }
+            scanTask?.cancel()
+        }
+
+        scanGeneration += 1
+        let generation = scanGeneration
+        let scanner = scanner
         isScanning = true
         errorMessage = nil
         let windowStart = scanWindowStart(for: range)
 
-        Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                self.scanner.scan(modifiedAfter: windowStart)
-            }.value
+        scanTask = Task { @MainActor [weak self] in
+            let worker = Task.detached(priority: .userInitiated) {
+                scanner.scan(modifiedAfter: windowStart, isCancelled: { Task.isCancelled })
+            }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard let self, !Task.isCancelled, generation == self.scanGeneration else { return }
             scanResult = result
             normalizeFilters()
             isScanning = false
+            scanTask = nil
         }
     }
 

@@ -1,18 +1,15 @@
 import Foundation
 
 public enum TokenLogParser {
-    public static func parseCodexFile(at url: URL) throws -> [TokenEvent] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: true)
+    public static func parseCodexFile(at url: URL, isCancelled: () -> Bool = { false }) throws -> [TokenEvent] {
         var events: [TokenEvent] = []
         var projectPath = "Unknown"
         var model = "Unknown"
         var previousTotal: TokenUsage?
         let sessionId = sessionIdFromFileName(url.lastPathComponent)
 
-        for (index, line) in lines.enumerated() {
-            guard let object = parseJSONObject(String(line)) else { continue }
-            guard let payload = object["payload"] as? [String: Any] else { continue }
+        try forEachJSONLine(in: url, isCancelled: isCancelled) { index, object in
+            guard let payload = object["payload"] as? [String: Any] else { return }
 
             if let cwd = payload["cwd"] as? String, !cwd.isEmpty {
                 projectPath = cwd
@@ -27,7 +24,7 @@ public enum TokenLogParser {
 
             let totalDict = nestedDict(payload, ["info", "total_token_usage"])
             let lastDict = nestedDict(payload, ["info", "last_token_usage"])
-            guard totalDict != nil || lastDict != nil else { continue }
+            guard totalDict != nil || lastDict != nil else { return }
 
             let usage: TokenUsage?
             if let totalDict {
@@ -46,7 +43,7 @@ public enum TokenLogParser {
                 usage = nil
             }
 
-            guard let usage, usage.total > 0 else { continue }
+            guard let usage, usage.total > 0 else { return }
             let id = stableID(parts: ["codex", url.path, "\(index)", "\(Int(timestamp.timeIntervalSince1970))", "\(usage.total)"])
             events.append(TokenEvent(
                 id: id,
@@ -63,21 +60,18 @@ public enum TokenLogParser {
         return events
     }
 
-    public static func parseClaudeFile(at url: URL) throws -> [TokenEvent] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.split(separator: "\n", omittingEmptySubsequences: true)
+    public static func parseClaudeFile(at url: URL, isCancelled: () -> Bool = { false }) throws -> [TokenEvent] {
         var events: [TokenEvent] = []
         var seenRequests = Set<String>()
 
-        for (index, line) in lines.enumerated() {
-            guard let object = parseJSONObject(String(line)) else { continue }
+        try forEachJSONLine(in: url, isCancelled: isCancelled) { index, object in
             guard let message = object["message"] as? [String: Any],
-                  let usageDict = message["usage"] as? [String: Any] else { continue }
+                  let usageDict = message["usage"] as? [String: Any] else { return }
 
             let requestId = object["requestId"] as? String
             let uuid = object["uuid"] as? String
             let dedupeKey = requestId ?? uuid ?? "\(url.path)#\(index)"
-            if seenRequests.contains(dedupeKey) { continue }
+            if seenRequests.contains(dedupeKey) { return }
             seenRequests.insert(dedupeKey)
 
             let timestamp = parseDate(object["timestamp"] as? String) ?? Date(timeIntervalSince1970: 0)
@@ -91,7 +85,7 @@ public enum TokenLogParser {
                 cacheRead: intValue(usageDict["cache_read_input_tokens"]),
                 output: intValue(usageDict["output_tokens"])
             )
-            guard usage.total > 0 else { continue }
+            guard usage.total > 0 else { return }
 
             let id = stableID(parts: ["claude", url.path, dedupeKey])
             events.append(TokenEvent(
@@ -131,9 +125,45 @@ public enum TokenLogParser {
         )
     }
 
-    private static func parseJSONObject(_ line: String) -> [String: Any]? {
-        guard let data = line.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data),
+    private static func forEachJSONLine(
+        in url: URL,
+        isCancelled: () -> Bool,
+        _ handle: (Int, [String: Any]) -> Void
+    ) throws {
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        var logicalLineIndex = 0
+        var lineStart = data.startIndex
+        var cursor = data.startIndex
+
+        while cursor < data.endIndex, !isCancelled() {
+            if data[cursor] == 10 {
+                processJSONLine(data, range: lineStart..<cursor, lineIndex: &logicalLineIndex, handle)
+                lineStart = data.index(after: cursor)
+            }
+            cursor = data.index(after: cursor)
+        }
+
+        if !isCancelled() {
+            processJSONLine(data, range: lineStart..<data.endIndex, lineIndex: &logicalLineIndex, handle)
+        }
+    }
+
+    private static func processJSONLine(
+        _ data: Data,
+        range: Range<Data.Index>,
+        lineIndex: inout Int,
+        _ handle: (Int, [String: Any]) -> Void
+    ) {
+        guard !range.isEmpty else { return }
+        let currentIndex = lineIndex
+        lineIndex += 1
+
+        guard let object = parseJSONObject(Data(data[range])) else { return }
+        handle(currentIndex, object)
+    }
+
+    private static func parseJSONObject(_ data: Data) -> [String: Any]? {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
               let dict = object as? [String: Any] else {
             return nil
         }

@@ -51,7 +51,7 @@ struct DashboardView: View {
         }
         .onChange(of: model.range) { _ in
             model.normalizeFilters()
-            model.refresh()
+            model.refresh(restartInProgress: true)
         }
         .task {
             updates.startAutoChecks()
@@ -80,7 +80,7 @@ struct DashboardView: View {
             .frame(width: 360)
 
             Button {
-                model.refresh()
+                model.refresh(restartInProgress: true)
             } label: {
                 if model.isScanning {
                     ProgressView().scaleEffect(0.58)

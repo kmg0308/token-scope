@@ -18,7 +18,7 @@ struct TokenMeterApp: App {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("Data") {
                 Button("Refresh") {
-                    model.refresh()
+                    model.refresh(restartInProgress: true)
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }

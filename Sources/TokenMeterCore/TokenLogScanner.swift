@@ -10,24 +10,29 @@ public final class TokenLogScanner: @unchecked Sendable {
     }
 
     public func scan(
-        modifiedAfter: Date? = nil
+        modifiedAfter: Date? = nil,
+        isCancelled: () -> Bool = { false }
     ) -> ScanResult {
+        guard !isCancelled() else { return ScanResult() }
         let codexFiles = selectedFiles(findCodexFiles(), modifiedAfter: modifiedAfter)
+        guard !isCancelled() else { return ScanResult() }
         let claudeFiles = selectedFiles(findClaudeFiles(), modifiedAfter: modifiedAfter)
         var events: [TokenEvent] = []
         var parseErrors = 0
 
         for file in codexFiles {
+            guard !isCancelled() else { break }
             do {
-                events.append(contentsOf: try TokenLogParser.parseCodexFile(at: file))
+                events.append(contentsOf: try TokenLogParser.parseCodexFile(at: file, isCancelled: isCancelled))
             } catch {
                 parseErrors += 1
             }
         }
 
         for file in claudeFiles {
+            guard !isCancelled() else { break }
             do {
-                events.append(contentsOf: try TokenLogParser.parseClaudeFile(at: file))
+                events.append(contentsOf: try TokenLogParser.parseClaudeFile(at: file, isCancelled: isCancelled))
             } catch {
                 parseErrors += 1
             }

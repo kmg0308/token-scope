@@ -733,26 +733,27 @@ struct UsageTable: View {
     var keyFormatter: (String) -> String = { $0 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(title)
-            VStack(spacing: 0) {
-                tableHeader
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.primaryText)
+                .padding(.bottom, 8)
+            tableHeader
+            Divider()
+            ForEach(rows) { row in
+                tableRow(row)
                 Divider()
-                ForEach(rows) { row in
-                    tableRow(row)
-                    Divider()
-                }
-                if rows.isEmpty {
-                    Text("No data")
-                        .foregroundStyle(TokenMeterTheme.secondaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 14)
-                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .tokenSurface()
+            if rows.isEmpty {
+                Text("No data")
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 14)
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .tokenSurface()
         .frame(minWidth: minWidth, alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }

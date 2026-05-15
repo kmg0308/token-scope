@@ -161,6 +161,14 @@ struct DashboardView: View {
 
                 Spacer()
 
+                Button {
+                    showFullTokenNumbers.toggle()
+                } label: {
+                    Image(systemName: showFullTokenNumbers ? "number.circle.fill" : "number.circle")
+                }
+                .buttonStyle(TokenCompactIconButtonStyle(selected: showFullTokenNumbers))
+                .help("Show exact token counts with separators")
+
                 if model.isScanning {
                     HStack(spacing: 7) {
                         ProgressView()
@@ -246,17 +254,6 @@ struct DashboardView: View {
                 HStack(alignment: .center, spacing: 8) {
                     rangePicker
                     bucketPicker
-
-                    Button {
-                        showFullTokenNumbers.toggle()
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: showFullTokenNumbers ? "number.circle.fill" : "number.circle")
-                            Text("Full")
-                        }
-                    }
-                    .buttonStyle(TokenPillButtonStyle(prominent: showFullTokenNumbers))
-                    .help("Show exact token counts with separators")
                 }
             }
 
@@ -267,37 +264,26 @@ struct DashboardView: View {
 
     private var rangePicker: some View {
         Menu {
-            Picker("Range", selection: $model.range) {
-                Section("Recent") {
-                    ForEach([
-                        TimeRangePreset.last30Minutes,
-                        .last1Hour,
-                        .last3Hours,
-                        .last6Hours,
-                        .last12Hours,
-                        .last24Hours
-                    ]) { preset in
-                        Text(preset.rawValue).tag(preset)
+            Section("Recent") {
+                ForEach(recentRangePresets) { preset in
+                    menuSelectionButton(preset.rawValue, isSelected: model.range == preset) {
+                        model.range = preset
                     }
                 }
+            }
 
-                Section("Days") {
-                    ForEach([
-                        TimeRangePreset.today,
-                        .last7Days,
-                        .last30Days
-                    ]) { preset in
-                        Text(preset.rawValue).tag(preset)
+            Section("Days") {
+                ForEach(dayRangePresets) { preset in
+                    menuSelectionButton(preset.rawValue, isSelected: model.range == preset) {
+                        model.range = preset
                     }
                 }
+            }
 
-                Section("Months") {
-                    ForEach([
-                        TimeRangePreset.last3Months,
-                        .last6Months,
-                        .last12Months
-                    ]) { preset in
-                        Text(preset.rawValue).tag(preset)
+            Section("Months") {
+                ForEach(monthRangePresets) { preset in
+                    menuSelectionButton(preset.rawValue, isSelected: model.range == preset) {
+                        model.range = preset
                     }
                 }
             }
@@ -311,27 +297,18 @@ struct DashboardView: View {
 
     private var bucketPicker: some View {
         Menu {
-            Picker("Group", selection: $model.bucket) {
-                Section("Minutes") {
-                    ForEach([
-                        BucketInterval.minute,
-                        .fiveMinutes,
-                        .tenMinutes,
-                        .twentyMinutes,
-                        .thirtyMinutes
-                    ]) { interval in
-                        Text(interval.displayName).tag(interval)
+            Section("Minutes") {
+                ForEach(minuteBucketIntervals) { interval in
+                    menuSelectionButton(interval.displayName, isSelected: model.bucket == interval) {
+                        model.bucket = interval
                     }
                 }
+            }
 
-                Section("Larger") {
-                    ForEach([
-                        BucketInterval.hour,
-                        .day,
-                        .week,
-                        .month
-                    ]) { interval in
-                        Text(interval.displayName).tag(interval)
+            Section("Larger") {
+                ForEach(largerBucketIntervals) { interval in
+                    menuSelectionButton(interval.displayName, isSelected: model.bucket == interval) {
+                        model.bucket = interval
                     }
                 }
             }
@@ -341,6 +318,37 @@ struct DashboardView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Chart grouping")
+    }
+
+    private var recentRangePresets: [TimeRangePreset] {
+        [.last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours]
+    }
+
+    private var dayRangePresets: [TimeRangePreset] {
+        [.today, .last7Days, .last30Days]
+    }
+
+    private var monthRangePresets: [TimeRangePreset] {
+        [.last3Months, .last6Months, .last12Months]
+    }
+
+    private var minuteBucketIntervals: [BucketInterval] {
+        [.minute, .fiveMinutes, .tenMinutes, .twentyMinutes, .thirtyMinutes]
+    }
+
+    private var largerBucketIntervals: [BucketInterval] {
+        [.hour, .day, .week, .month]
+    }
+
+    @ViewBuilder
+    private func menuSelectionButton(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            if isSelected {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
     }
 
     private var chartBuckets: [TimeBucket] {
@@ -378,25 +386,33 @@ struct DashboardView: View {
     }
 
     private var filters: some View {
-        HStack(spacing: 12) {
-            Picker("Project", selection: $model.projectFilter) {
+        HStack(spacing: 18) {
+            Menu {
                 ForEach(model.projectOptions, id: \.self) { project in
-                    Text(shortProject(project)).tag(project)
+                    menuSelectionButton(shortProject(project), isSelected: model.projectFilter == project) {
+                        model.projectFilter = project
+                    }
                 }
+            } label: {
+                TokenFilterMenuLabel(title: "Project", value: shortProject(model.projectFilter), width: 290)
             }
-            .foregroundStyle(TokenMeterTheme.primaryText)
-            .frame(width: 260)
+            .menuStyle(.borderlessButton)
 
-            Picker("Model", selection: $model.modelFilter) {
+            Menu {
                 ForEach(model.modelOptions, id: \.self) { modelName in
-                    Text(modelName).tag(modelName)
+                    menuSelectionButton(modelName, isSelected: model.modelFilter == modelName) {
+                        model.modelFilter = modelName
+                    }
                 }
+            } label: {
+                TokenFilterMenuLabel(title: "Model", value: model.modelFilter, width: 290)
             }
-            .foregroundStyle(TokenMeterTheme.primaryText)
-            .frame(width: 260)
+            .menuStyle(.borderlessButton)
 
             Spacer()
         }
+        .padding(14)
+        .tokenSurface()
     }
 
     private var details: some View {

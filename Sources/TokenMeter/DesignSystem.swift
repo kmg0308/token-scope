@@ -18,7 +18,9 @@ enum TokenMeterTheme {
 
     static let cardRadius: CGFloat = 8
     static let buttonHeight: CGFloat = 36
+    static let compactButtonHeight: CGFloat = 28
     static let iconButtonSize: CGFloat = 36
+    static let compactIconButtonSize: CGFloat = 28
 }
 
 struct TokenSurfaceModifier: ViewModifier {
@@ -75,6 +77,28 @@ struct TokenPillButtonStyle: ButtonStyle {
     }
 }
 
+struct TokenCompactIconButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    var selected = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(selected ? Color.black.opacity(0.90) : TokenMeterTheme.secondaryText)
+            .frame(width: TokenMeterTheme.compactIconButtonSize, height: TokenMeterTheme.compactIconButtonSize)
+            .background {
+                Circle()
+                    .fill(selected ? TokenMeterTheme.accent.opacity(configuration.isPressed ? 0.82 : 1) : TokenMeterTheme.control)
+            }
+            .overlay {
+                Circle()
+                    .stroke(selected ? Color.clear : TokenMeterTheme.subtleBorder, lineWidth: 1)
+            }
+            .opacity(isEnabled ? 1 : 0.48)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+    }
+}
+
 struct TokenIconButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var prominent = false
@@ -122,6 +146,44 @@ struct TokenMenuLabel: View {
         .overlay {
             Capsule(style: .continuous)
                 .stroke(TokenMeterTheme.border, lineWidth: 1)
+        }
+    }
+}
+
+struct TokenFilterMenuLabel: View {
+    let title: String
+    let value: String
+    var width: CGFloat = 240
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.tertiaryText)
+                .textCase(.uppercase)
+                .frame(width: 58, alignment: .leading)
+
+            HStack(spacing: 8) {
+                Text(value)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TokenMeterTheme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(TokenMeterTheme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .frame(width: width, height: TokenMeterTheme.buttonHeight)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(TokenMeterTheme.control)
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(TokenMeterTheme.border, lineWidth: 1)
+            }
         }
     }
 }

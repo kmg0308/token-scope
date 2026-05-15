@@ -10,12 +10,10 @@ public final class TokenLogScanner: @unchecked Sendable {
     }
 
     public func scan(
-        modifiedAfter: Date? = nil,
-        maxFilesPerSource: Int? = nil,
-        maxFileBytes: Int? = nil
+        modifiedAfter: Date? = nil
     ) -> ScanResult {
-        let codexFiles = selectedFiles(findCodexFiles(), modifiedAfter: modifiedAfter, maxFiles: maxFilesPerSource, maxFileBytes: maxFileBytes)
-        let claudeFiles = selectedFiles(findClaudeFiles(), modifiedAfter: modifiedAfter, maxFiles: maxFilesPerSource, maxFileBytes: maxFileBytes)
+        let codexFiles = selectedFiles(findCodexFiles(), modifiedAfter: modifiedAfter)
+        let claudeFiles = selectedFiles(findClaudeFiles(), modifiedAfter: modifiedAfter)
         var events: [TokenEvent] = []
         var parseErrors = 0
 
@@ -73,30 +71,19 @@ public final class TokenLogScanner: @unchecked Sendable {
         return files
     }
 
-    private func selectedFiles(_ files: [URL], modifiedAfter: Date?, maxFiles: Int?, maxFileBytes: Int?) -> [URL] {
+    private func selectedFiles(_ files: [URL], modifiedAfter: Date?) -> [URL] {
         let filtered = files.filter { url in
             if let modifiedAfter {
                 guard let date = modificationDate(url), date >= modifiedAfter else { return false }
             }
-            if let maxFileBytes, let size = fileSize(url), size > maxFileBytes {
-                return false
-            }
             return true
         }
-        let sorted = filtered.sorted {
+        return filtered.sorted {
             (modificationDate($0) ?? .distantPast) > (modificationDate($1) ?? .distantPast)
         }
-        if let maxFiles {
-            return Array(sorted.prefix(maxFiles))
-        }
-        return sorted
     }
 
     private func modificationDate(_ url: URL) -> Date? {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-    }
-
-    private func fileSize(_ url: URL) -> Int? {
-        (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
     }
 }

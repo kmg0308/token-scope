@@ -40,12 +40,10 @@ final class DashboardModel: ObservableObject {
         isScanning = true
         errorMessage = nil
         let windowStart = scanWindowStart(for: range)
-        let maxFiles = maxFilesPerSource(for: range)
-        let maxBytes = maxFileBytes(for: range)
 
         Task {
             let result = await Task.detached(priority: .userInitiated) {
-                self.scanner.scan(modifiedAfter: windowStart, maxFilesPerSource: maxFiles, maxFileBytes: maxBytes)
+                self.scanner.scan(modifiedAfter: windowStart)
             }.value
             scanResult = result
             normalizeFilters()
@@ -138,32 +136,6 @@ final class DashboardModel: ObservableObject {
             return interval.start
         case .all:
             return nil
-        }
-    }
-
-    private func maxFilesPerSource(for range: TimeRangePreset) -> Int? {
-        switch range {
-        case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours:
-            return 40
-        case .last7Days:
-            return 120
-        case .last30Days:
-            return 240
-        case .last3Months, .last6Months, .last12Months:
-            return 500
-        case .all:
-            return 700
-        }
-    }
-
-    private func maxFileBytes(for range: TimeRangePreset) -> Int? {
-        switch range {
-        case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours:
-            return 25 * 1_024 * 1_024
-        case .last7Days, .last30Days:
-            return 50 * 1_024 * 1_024
-        case .last3Months, .last6Months, .last12Months, .all:
-            return 75 * 1_024 * 1_024
         }
     }
 }

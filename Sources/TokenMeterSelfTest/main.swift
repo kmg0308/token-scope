@@ -10,6 +10,7 @@ enum TokenMeterSelfTest {
         try fiveMinuteBucketsRoundDown()
         try dashboardRangesExposeShortOptions()
         try dashboardBucketOptionsStayReadable()
+        try scannerIncludesAllRecentClaudeFiles()
         if CommandLine.arguments.contains("--real-scan") {
             runRealScanSmokeTest()
         }
@@ -142,6 +143,34 @@ enum TokenMeterSelfTest {
         )
     }
 
+    private static func scannerIncludesAllRecentClaudeFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let projectDirectory = directory
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+            .appendingPathComponent("sample", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDirectory, withIntermediateDirectories: true)
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let timestamp = formatter.string(from: Date())
+
+        for index in 0..<45 {
+            let content = """
+            {"timestamp":"\(timestamp)","sessionId":"s\(index)","requestId":"r\(index)","uuid":"u\(index)","cwd":"/tmp/project","type":"assistant","message":{"model":"claude-opus","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}
+            """
+            let url = projectDirectory.appendingPathComponent("sample-\(index).jsonl")
+            try content.write(to: url, atomically: true, encoding: .utf8)
+        }
+
+        let scanner = TokenLogScanner(homeDirectory: directory)
+        let result = scanner.scan(modifiedAfter: Date(timeIntervalSinceNow: -60))
+        try expect(result.claudeFileCount == 45, "scanner includes every recent Claude file")
+        try expect(result.events.count == 45, "scanner parses every recent Claude event")
+        try expect(Aggregation.totalUsage(events: result.events).total == 45, "scanner totals every recent Claude event")
+    }
+
     private static func temporaryFile(_ content: String) -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -183,7 +212,7 @@ enum TokenMeterSelfTest {
         let start = Date()
         let scanner = TokenLogScanner()
         let modifiedAfter = Calendar.current.startOfDay(for: Date())
-        let result = scanner.scan(modifiedAfter: modifiedAfter, maxFilesPerSource: 40, maxFileBytes: 25 * 1_024 * 1_024)
+        let result = scanner.scan(modifiedAfter: modifiedAfter)
         let elapsed = Date().timeIntervalSince(start)
         print("Real scan smoke: \(result.events.count) events, \(result.codexFileCount) Codex files, \(result.claudeFileCount) Claude files, \(String(format: "%.2f", elapsed))s")
     }

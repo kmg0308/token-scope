@@ -11,7 +11,8 @@ struct TokenMeterApp: App {
             DashboardView()
                 .environmentObject(model)
                 .environmentObject(updates)
-                .tint(Color.primary.opacity(0.82))
+                .preferredColorScheme(.dark)
+                .tint(TokenMeterTheme.accent)
                 .frame(minWidth: 900, minHeight: 620)
         }
         .commands {

@@ -13,7 +13,9 @@ struct DashboardView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Rectangle()
+                .fill(TokenMeterTheme.subtleBorder)
+                .frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if updates.updateLabel != nil {
@@ -38,10 +40,19 @@ struct DashboardView: View {
 
                     dataFooter
                 }
-                .padding(22)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 22)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .foregroundStyle(TokenMeterTheme.primaryText)
+        .background {
+            LinearGradient(
+                colors: [TokenMeterTheme.backgroundTop, TokenMeterTheme.background],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        }
         .sheet(isPresented: $updates.isSheetPresented) {
             UpdateSheetView()
                 .environmentObject(updates)
@@ -59,25 +70,35 @@ struct DashboardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("TokenMeter")
-                    .font(.system(size: 17, weight: .semibold))
-                Text(headerSubtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 16) {
+            HStack(spacing: 11) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(TokenMeterTheme.elevatedSurface)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(TokenMeterTheme.border, lineWidth: 1)
+                        }
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(TokenMeterTheme.accent)
+                }
+                .frame(width: 34, height: 34)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("TokenMeter")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(TokenMeterTheme.primaryText)
+                    Text(headerSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
+                }
             }
 
             Spacer()
 
-            Picker("View", selection: $model.selectedSection) {
-                ForEach(DashboardSection.allCases) { section in
-                    Text(section.rawValue).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 360)
+            SectionSelector(selection: $model.selectedSection)
+                .frame(width: 372)
 
             Button {
                 model.refresh(restartInProgress: true)
@@ -89,7 +110,7 @@ struct DashboardView: View {
                 }
             }
             .help("Refresh")
-            .frame(width: 32)
+            .buttonStyle(TokenIconButtonStyle())
 
             Button {
                 updates.isSheetPresented = true
@@ -99,9 +120,10 @@ struct DashboardView: View {
                     Text(updates.updateLabel == nil ? "Updates" : "Update")
                 }
             }
+            .buttonStyle(TokenPillButtonStyle(prominent: updates.updateLabel != nil))
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 15)
     }
 
     private var headerSubtitle: String {
@@ -121,25 +143,52 @@ struct DashboardView: View {
 
     private var mainSummary: some View {
         let usage = model.totalUsage
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(model.range.rawValue)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 10) {
+                HStack(spacing: 7) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(model.range.rawValue)
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.secondaryText)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(TokenMeterTheme.control)
+                }
 
-            HStack(alignment: .lastTextBaseline, spacing: 9) {
+                Spacer()
+
+                if model.isScanning {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .scaleEffect(0.58)
+                        Text("Scanning")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
+                }
+            }
+
+            HStack(alignment: .lastTextBaseline, spacing: 10) {
                 Text(TokenFormatters.tokens(usage.total, format: numberFormat))
-                    .font(.system(size: showFullTokenNumbers ? 42 : 52, weight: .semibold))
+                    .font(.system(size: showFullTokenNumbers ? 44 : 56, weight: .semibold))
                     .monospacedDigit()
                     .lineLimit(1)
-                    .minimumScaleFactor(0.68)
+                    .minimumScaleFactor(0.62)
+                    .foregroundStyle(TokenMeterTheme.primaryText)
                 Text("tokens")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
             }
 
             summaryLine
         }
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .tokenSurface(elevated: true)
     }
 
     private var summaryLine: some View {
@@ -163,7 +212,7 @@ struct DashboardView: View {
             Spacer()
         }
         .font(.system(size: 12))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TokenMeterTheme.secondaryText)
     }
 
     private func inlineMetric(_ title: String, _ value: String, color: Color? = nil) -> some View {
@@ -175,26 +224,39 @@ struct DashboardView: View {
             }
             Text(title)
             Text(value)
-                .foregroundStyle(.primary)
+                .foregroundStyle(TokenMeterTheme.primaryText)
                 .monospacedDigit()
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background {
+            Capsule(style: .continuous)
+                .fill(TokenMeterTheme.control)
         }
     }
 
     private var chartBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 14) {
                 Text("Usage")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(TokenMeterTheme.primaryText)
                 Spacer()
 
                 HStack(alignment: .center, spacing: 8) {
                     rangePicker
                     bucketPicker
 
-                    Toggle("Full numbers", isOn: $showFullTokenNumbers)
-                        .toggleStyle(.checkbox)
-                        .fixedSize()
-                        .help("Show exact token counts with separators")
+                    Button {
+                        showFullTokenNumbers.toggle()
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: showFullTokenNumbers ? "number.circle.fill" : "number.circle")
+                            Text("Full")
+                        }
+                    }
+                    .buttonStyle(TokenPillButtonStyle(prominent: showFullTokenNumbers))
+                    .help("Show exact token counts with separators")
                 }
             }
 
@@ -204,76 +266,80 @@ struct DashboardView: View {
     }
 
     private var rangePicker: some View {
-        Picker("Range", selection: $model.range) {
-            Section("Recent") {
-                ForEach([
-                    TimeRangePreset.last30Minutes,
-                    .last1Hour,
-                    .last3Hours,
-                    .last6Hours,
-                    .last12Hours,
-                    .last24Hours
-                ]) { preset in
-                    Text(preset.rawValue).tag(preset)
+        Menu {
+            Picker("Range", selection: $model.range) {
+                Section("Recent") {
+                    ForEach([
+                        TimeRangePreset.last30Minutes,
+                        .last1Hour,
+                        .last3Hours,
+                        .last6Hours,
+                        .last12Hours,
+                        .last24Hours
+                    ]) { preset in
+                        Text(preset.rawValue).tag(preset)
+                    }
                 }
-            }
 
-            Section("Days") {
-                ForEach([
-                    TimeRangePreset.today,
-                    .last7Days,
-                    .last30Days
-                ]) { preset in
-                    Text(preset.rawValue).tag(preset)
+                Section("Days") {
+                    ForEach([
+                        TimeRangePreset.today,
+                        .last7Days,
+                        .last30Days
+                    ]) { preset in
+                        Text(preset.rawValue).tag(preset)
+                    }
                 }
-            }
 
-            Section("Months") {
-                ForEach([
-                    TimeRangePreset.last3Months,
-                    .last6Months,
-                    .last12Months
-                ]) { preset in
-                    Text(preset.rawValue).tag(preset)
+                Section("Months") {
+                    ForEach([
+                        TimeRangePreset.last3Months,
+                        .last6Months,
+                        .last12Months
+                    ]) { preset in
+                        Text(preset.rawValue).tag(preset)
+                    }
                 }
             }
+        } label: {
+            TokenMenuLabel(icon: "calendar", title: model.range.rawValue)
         }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .controlSize(.small)
-        .frame(width: 76)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
         .help("Time range")
     }
 
     private var bucketPicker: some View {
-        Picker("Group", selection: $model.bucket) {
-            Section("Minutes") {
-                ForEach([
-                    BucketInterval.minute,
-                    .fiveMinutes,
-                    .tenMinutes,
-                    .twentyMinutes,
-                    .thirtyMinutes
-                ]) { interval in
-                    Text(interval.displayName).tag(interval)
+        Menu {
+            Picker("Group", selection: $model.bucket) {
+                Section("Minutes") {
+                    ForEach([
+                        BucketInterval.minute,
+                        .fiveMinutes,
+                        .tenMinutes,
+                        .twentyMinutes,
+                        .thirtyMinutes
+                    ]) { interval in
+                        Text(interval.displayName).tag(interval)
+                    }
                 }
-            }
 
-            Section("Larger") {
-                ForEach([
-                    BucketInterval.hour,
-                    .day,
-                    .week,
-                    .month
-                ]) { interval in
-                    Text(interval.displayName).tag(interval)
+                Section("Larger") {
+                    ForEach([
+                        BucketInterval.hour,
+                        .day,
+                        .week,
+                        .month
+                    ]) { interval in
+                        Text(interval.displayName).tag(interval)
+                    }
                 }
             }
+        } label: {
+            TokenMenuLabel(icon: "chart.bar.xaxis", title: model.bucket.displayName)
         }
-        .labelsHidden()
-        .pickerStyle(.menu)
-        .controlSize(.small)
-        .frame(width: 112)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
         .help("Chart grouping")
     }
 
@@ -304,7 +370,8 @@ struct DashboardView: View {
 
         return VStack(alignment: .leading, spacing: 10) {
             Text("Breakdown")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.primaryText)
 
             ComponentBreakdown(usage: usage, source: model.selectedSection.sourceFilter, numberFormat: numberFormat)
         }
@@ -317,6 +384,7 @@ struct DashboardView: View {
                     Text(shortProject(project)).tag(project)
                 }
             }
+            .foregroundStyle(TokenMeterTheme.primaryText)
             .frame(width: 260)
 
             Picker("Model", selection: $model.modelFilter) {
@@ -324,6 +392,7 @@ struct DashboardView: View {
                     Text(modelName).tag(modelName)
                 }
             }
+            .foregroundStyle(TokenMeterTheme.primaryText)
             .frame(width: 260)
 
             Spacer()
@@ -347,7 +416,7 @@ struct DashboardView: View {
             footerItem("Errors", model.scanResult.parseErrorCount)
             Spacer()
             Text("Scanned \(model.scanResult.scannedAt.formatted(date: .omitted, time: .shortened))")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TokenMeterTheme.tertiaryText)
         }
         .font(.system(size: 11))
         .padding(.top, 2)
@@ -356,9 +425,47 @@ struct DashboardView: View {
     private func footerItem(_ title: String, _ value: Int) -> some View {
         HStack(spacing: 4) {
             Text(title)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TokenMeterTheme.tertiaryText)
             Text(TokenFormatters.integer(value))
                 .monospacedDigit()
+                .foregroundStyle(TokenMeterTheme.secondaryText)
+        }
+    }
+}
+
+struct SectionSelector: View {
+    @Binding var selection: DashboardSection
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(DashboardSection.allCases) { section in
+                Button {
+                    selection = section
+                } label: {
+                    Text(section.rawValue)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 30)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(selection == section ? Color.black.opacity(0.88) : TokenMeterTheme.secondaryText)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(selection == section ? TokenMeterTheme.primaryText : Color.clear)
+                }
+                .contentShape(Capsule(style: .continuous))
+            }
+        }
+        .padding(3)
+        .frame(height: TokenMeterTheme.buttonHeight)
+        .background {
+            Capsule(style: .continuous)
+                .fill(TokenMeterTheme.control)
+        }
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(TokenMeterTheme.border, lineWidth: 1)
         }
     }
 }
@@ -369,23 +476,25 @@ struct UpdateAvailableBanner: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "arrow.down.circle.fill")
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.accent)
             Text(updates.statusText)
                 .font(.system(size: 13))
+                .foregroundStyle(TokenMeterTheme.primaryText)
             Spacer()
             Button(updateButtonTitle) {
                 updates.updateNow()
             }
+            .buttonStyle(TokenPillButtonStyle(prominent: true))
             .disabled(updates.isChecking || updates.isDownloading || updates.isInstalling)
             Button("Details") {
                 updates.isSheetPresented = true
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(TokenPillButtonStyle())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(Color.primary.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .tokenSurface(elevated: true)
     }
 
     private var updateButtonTitle: String {
@@ -420,18 +529,28 @@ struct CollapsibleSection<Content: View>: View {
                 HStack(spacing: 6) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
                         .frame(width: 12)
                     Text(title)
                         .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(TokenMeterTheme.primaryText)
                     Spacer()
                 }
-                .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .background(TokenMeterTheme.surface)
+                .overlay {
+                    RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous)
+                        .stroke(TokenMeterTheme.subtleBorder, lineWidth: 1)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             if isExpanded {
                 content
+                    .padding(.horizontal, 1)
             }
         }
     }
@@ -467,18 +586,18 @@ struct ComponentBreakdown: View {
                             .fill(componentColor(component.kind))
                             .frame(width: 10, height: 8)
                         Text(component.kind.rawValue)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(TokenMeterTheme.secondaryText)
                         Text(TokenFormatters.tokens(component.value, format: numberFormat))
                             .monospacedDigit()
+                            .foregroundStyle(TokenMeterTheme.primaryText)
                     }
                 }
                 Spacer()
             }
             .font(.system(size: 12))
         }
-        .padding(12)
-        .background(Color.primary.opacity(0.035))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(14)
+        .tokenSurface()
     }
 }
 
@@ -492,7 +611,7 @@ struct SectionTitle: View {
     var body: some View {
         Text(text)
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.primary)
+            .foregroundStyle(TokenMeterTheme.primaryText)
     }
 }
 

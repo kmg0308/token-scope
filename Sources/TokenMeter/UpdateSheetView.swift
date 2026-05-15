@@ -10,6 +10,7 @@ struct UpdateSheetView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Updates")
                         .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(TokenMeterTheme.primaryText)
                     Text(statusTitle)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(statusColor)
@@ -20,26 +21,27 @@ struct UpdateSheetView: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(TokenIconButtonStyle())
                 .help("Close")
             }
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     versionColumn("Current", UpdateService.installedVersion())
-                    Divider()
+                    Rectangle()
+                        .fill(TokenMeterTheme.subtleBorder)
+                        .frame(width: 1)
                     versionColumn("Available", availableVersionText)
                 }
 
                 Text(updates.statusText)
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(14)
-            .background(Color.primary.opacity(0.045))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .tokenSurface()
 
             HStack(spacing: 10) {
                 if updates.isChecking || updates.isDownloading || updates.isInstalling {
@@ -49,6 +51,7 @@ struct UpdateSheetView: View {
                 Button("Check for Updates") {
                     updates.checkLatestRelease(silent: false)
                 }
+                .buttonStyle(TokenPillButtonStyle())
                 .disabled(buttonsDisabled)
 
                 Spacer()
@@ -57,6 +60,7 @@ struct UpdateSheetView: View {
                     Button("Install and Relaunch") {
                         updates.updateNow()
                     }
+                    .buttonStyle(TokenPillButtonStyle(prominent: true))
                     .keyboardShortcut(.defaultAction)
                     .disabled(buttonsDisabled)
                 }
@@ -64,6 +68,8 @@ struct UpdateSheetView: View {
         }
         .padding(20)
         .frame(width: 440)
+        .foregroundStyle(TokenMeterTheme.primaryText)
+        .background(TokenMeterTheme.background)
         .onAppear {
             updates.checkIfConfigured(silent: true)
         }
@@ -94,8 +100,8 @@ struct UpdateSheetView: View {
 
     private var statusColor: Color {
         updates.availability?.isAvailable == true || updates.downloadedFileIsInstallable
-            ? Color.primary
-            : Color.secondary
+            ? TokenMeterTheme.accent
+            : TokenMeterTheme.secondaryText
     }
 
     private var buttonsDisabled: Bool {
@@ -106,9 +112,10 @@ struct UpdateSheetView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TokenMeterTheme.secondaryText)
             Text(value)
                 .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.primaryText)
                 .monospacedDigit()
                 .lineLimit(1)
                 .truncationMode(.middle)

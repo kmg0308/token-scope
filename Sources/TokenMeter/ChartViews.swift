@@ -40,9 +40,8 @@ struct TokenBarChart: View {
             }
             chartLegend
         }
-        .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(16)
+        .tokenSurface()
     }
 
     private func plotArea(buckets: [TimeBucket], maxValue: Int, sparseTimeline: Bool) -> some View {
@@ -52,7 +51,7 @@ struct TokenBarChart: View {
             if buckets.isEmpty {
                 Text("No data")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 GeometryReader { proxy in
@@ -65,7 +64,7 @@ struct TokenBarChart: View {
                            let index = buckets.firstIndex(where: { $0.id == hoveredBucket.id }) {
                             let slotCenterX = slotWidth * CGFloat(index) + slotWidth / 2
                             RoundedRectangle(cornerRadius: 5)
-                                .fill(Color.primary.opacity(0.055))
+                                .fill(Color.white.opacity(0.065))
                                 .frame(width: min(slotWidth * 0.84, max(barWidth + 12, barWidth)), height: proxy.size.height)
                                 .position(x: slotCenterX, y: proxy.size.height / 2)
                                 .allowsHitTesting(false)
@@ -169,7 +168,7 @@ struct TokenBarChart: View {
 
     private var gridLine: some View {
         Rectangle()
-            .fill(Color.primary.opacity(0.08))
+            .fill(Color.white.opacity(0.075))
             .frame(height: 1)
     }
 
@@ -186,7 +185,7 @@ struct TokenBarChart: View {
             }
         }
         .font(.system(size: 10))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TokenMeterTheme.tertiaryText)
         .monospacedDigit()
     }
 
@@ -201,7 +200,7 @@ struct TokenBarChart: View {
                 ForEach(ticks) { tick in
                     VStack(spacing: 4) {
                         Rectangle()
-                            .fill(Color.primary.opacity(0.16))
+                            .fill(Color.white.opacity(0.14))
                             .frame(width: 1, height: 5)
                         Text(tick.title)
                             .lineLimit(1)
@@ -213,7 +212,7 @@ struct TokenBarChart: View {
             }
         }
         .font(.system(size: 10))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TokenMeterTheme.tertiaryText)
     }
 
     private func axisTicks(buckets: [TimeBucket], width: CGFloat) -> [AxisTick] {
@@ -466,7 +465,7 @@ struct TokenBarChart: View {
             Spacer()
         }
         .font(.system(size: 11))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TokenMeterTheme.secondaryText)
     }
 
     private func legend(_ title: String, _ source: TokenSource) -> some View {
@@ -475,10 +474,16 @@ struct TokenBarChart: View {
 
     private func legend(_ title: String, _ color: Color) -> some View {
         HStack(spacing: 5) {
-            Rectangle()
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
                 .fill(color)
                 .frame(width: 12, height: 8)
             Text(title)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background {
+            Capsule(style: .continuous)
+                .fill(TokenMeterTheme.control)
         }
     }
 
@@ -578,7 +583,7 @@ struct BarStack: View {
                 barBody(totalHeight: totalHeight)
             }
         }
-        .opacity(isHovered ? 1.0 : 0.88)
+        .opacity(isHovered ? 1.0 : 0.92)
         .zIndex(isHovered ? 10 : 0)
         .onHover { inside in
             onHoverBucket(inside ? bucket : nil)
@@ -599,7 +604,8 @@ struct BarStack: View {
             }
         }
         .frame(height: totalHeight)
-        .clipShape(RoundedRectangle(cornerRadius: 2))
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .shadow(color: isHovered ? Color.black.opacity(0.35) : Color.clear, radius: 8, x: 0, y: 4)
     }
 }
 
@@ -620,7 +626,7 @@ struct ChartTooltip: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(bucket.start.formatted(date: .abbreviated, time: .shortened))
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TokenMeterTheme.secondaryText)
 
             Text(TokenFormatters.tokens(bucket.usage.total, format: numberFormat))
                 .font(.system(size: 18, weight: .semibold))
@@ -629,7 +635,7 @@ struct ChartTooltip: View {
                 .minimumScaleFactor(0.82)
             Text("tokens")
                 .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(TokenMeterTheme.secondaryText)
 
             VStack(alignment: .leading, spacing: 5) {
                 ForEach(chartSegments(for: bucket, mode: mode), id: \.id) { segment in
@@ -650,9 +656,13 @@ struct ChartTooltip: View {
         }
         .padding(10)
         .frame(width: numberFormat == .full ? 238 : 178, alignment: .leading)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .shadow(color: Color.black.opacity(0.18), radius: 12, x: 0, y: 6)
+        .background(TokenMeterTheme.elevatedSurface)
+        .overlay {
+            RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous)
+                .stroke(TokenMeterTheme.border, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous))
+        .shadow(color: Color.black.opacity(0.34), radius: 14, x: 0, y: 8)
     }
 }
 
@@ -665,14 +675,14 @@ struct ProportionBar: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Rectangle()
-                    .fill(Color.primary.opacity(0.08))
+                    .fill(Color.white.opacity(0.08))
                 Rectangle()
                     .fill(color)
                     .frame(width: proxy.size.width * CGFloat(value) / CGFloat(max(1, maxValue)))
             }
         }
         .frame(height: 8)
-        .clipShape(RoundedRectangle(cornerRadius: 2))
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
     }
 }
 
@@ -734,15 +744,14 @@ struct UsageTable: View {
                 }
                 if rows.isEmpty {
                     Text("No data")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 14)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .tokenSurface()
         }
         .frame(minWidth: minWidth, alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -760,7 +769,7 @@ struct UsageTable: View {
             Text("Count").frame(width: 52, alignment: .trailing)
         }
         .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(TokenMeterTheme.tertiaryText)
         .padding(.vertical, 7)
     }
 
@@ -768,6 +777,7 @@ struct UsageTable: View {
         HStack {
             Text(keyFormatter(row.key))
                 .lineLimit(1)
+                .foregroundStyle(TokenMeterTheme.secondaryText)
                 .help(row.key)
                 .frame(maxWidth: .infinity, alignment: .leading)
             tokenCell(row.usage.total, width: totalColumnWidth)
@@ -779,6 +789,7 @@ struct UsageTable: View {
             Text(TokenFormatters.integer(row.count)).frame(width: 52, alignment: .trailing)
         }
         .font(.system(size: 12))
+        .foregroundStyle(TokenMeterTheme.primaryText)
         .monospacedDigit()
         .padding(.vertical, 8)
     }
@@ -824,24 +835,24 @@ struct UsageTable: View {
 func sourceColor(_ source: TokenSource) -> Color {
     switch source {
     case .codex:
-        return Color(red: 0.24, green: 0.48, blue: 0.95)
+        return Color(red: 0.39, green: 0.72, blue: 1.0)
     case .claude:
-        return Color(red: 0.93, green: 0.48, blue: 0.20)
+        return Color(red: 1.0, green: 0.56, blue: 0.25)
     case .all:
-        return Color(red: 0.48, green: 0.52, blue: 0.58)
+        return Color(red: 0.58, green: 0.62, blue: 0.68)
     }
 }
 
 func componentColor(_ kind: TokenComponentKind) -> Color {
     switch kind {
     case .input:
-        return Color(red: 0.24, green: 0.48, blue: 0.95)
+        return Color(red: 0.39, green: 0.72, blue: 1.0)
     case .cache:
-        return Color(red: 0.18, green: 0.63, blue: 0.58)
+        return Color(red: 0.30, green: 0.86, blue: 0.72)
     case .output:
-        return Color(red: 0.88, green: 0.64, blue: 0.20)
+        return Color(red: 1.0, green: 0.76, blue: 0.30)
     case .reasoning:
-        return Color(red: 0.57, green: 0.43, blue: 0.86)
+        return Color(red: 0.72, green: 0.53, blue: 1.0)
     }
 }
 

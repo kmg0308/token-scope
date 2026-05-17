@@ -130,6 +130,7 @@ public struct ScanResult: Sendable {
     public var codexFileCount: Int
     public var claudeFileCount: Int
     public var parseErrorCount: Int
+    public var sourceStatuses: [ScanSourceStatus]
     public var scannedAt: Date
 
     public init(
@@ -137,13 +138,44 @@ public struct ScanResult: Sendable {
         codexFileCount: Int = 0,
         claudeFileCount: Int = 0,
         parseErrorCount: Int = 0,
+        sourceStatuses: [ScanSourceStatus] = [],
         scannedAt: Date = Date()
     ) {
         self.events = events
         self.codexFileCount = codexFileCount
         self.claudeFileCount = claudeFileCount
         self.parseErrorCount = parseErrorCount
+        self.sourceStatuses = sourceStatuses
         self.scannedAt = scannedAt
+    }
+}
+
+public struct ScanSourceStatus: Identifiable, Hashable, Sendable {
+    public var id: String { path }
+    public var source: TokenSource
+    public var label: String
+    public var path: String
+    public var exists: Bool
+    public var totalFileCount: Int
+    public var scannedFileCount: Int
+    public var parseErrorCount: Int
+
+    public init(
+        source: TokenSource,
+        label: String,
+        path: String,
+        exists: Bool,
+        totalFileCount: Int,
+        scannedFileCount: Int,
+        parseErrorCount: Int = 0
+    ) {
+        self.source = source
+        self.label = label
+        self.path = path
+        self.exists = exists
+        self.totalFileCount = totalFileCount
+        self.scannedFileCount = scannedFileCount
+        self.parseErrorCount = parseErrorCount
     }
 }
 

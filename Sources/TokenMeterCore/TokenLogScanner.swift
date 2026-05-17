@@ -14,49 +14,134 @@ public final class TokenLogScanner: @unchecked Sendable {
         isCancelled: () -> Bool = { false }
     ) -> ScanResult {
         guard !isCancelled() else { return ScanResult() }
-        let codexFiles = selectedFiles(findCodexFiles(), modifiedAfter: modifiedAfter)
-        guard !isCancelled() else { return ScanResult() }
-        let claudeFiles = selectedFiles(findClaudeFiles(), modifiedAfter: modifiedAfter)
+        var roots = scanRoots(modifiedAfter: modifiedAfter)
         var events: [TokenEvent] = []
-        var parseErrors = 0
 
-        for file in codexFiles {
-            guard !isCancelled() else { break }
-            do {
-                events.append(contentsOf: try TokenLogParser.parseCodexFile(at: file, isCancelled: isCancelled))
-            } catch {
-                parseErrors += 1
+        for index in roots.indices {
+            guard roots[index].source == .codex else { continue }
+            let files = roots[index].selectedFiles
+            var parseErrors = 0
+            for file in files {
+                guard !isCancelled() else { break }
+                do {
+                    events.append(contentsOf: try TokenLogParser.parseCodexFile(at: file, isCancelled: isCancelled))
+                } catch {
+                    parseErrors += 1
+                }
             }
+            roots[index].parseErrorCount = parseErrors
         }
 
-        for file in claudeFiles {
-            guard !isCancelled() else { break }
-            do {
-                events.append(contentsOf: try TokenLogParser.parseClaudeFile(at: file, isCancelled: isCancelled))
-            } catch {
-                parseErrors += 1
+        for index in roots.indices {
+            guard roots[index].source == .claude else { continue }
+            let files = roots[index].selectedFiles
+            var parseErrors = 0
+            for file in files {
+                guard !isCancelled() else { break }
+                do {
+                    events.append(contentsOf: try TokenLogParser.parseClaudeFile(at: file, isCancelled: isCancelled))
+                } catch {
+                    parseErrors += 1
+                }
             }
+            roots[index].parseErrorCount = parseErrors
         }
+
+        let sourceStatuses = roots.map(\.status)
+        let codexFileCount = sourceStatuses
+            .filter { $0.source == .codex }
+            .map(\.scannedFileCount)
+            .reduce(0, +)
+        let claudeFileCount = sourceStatuses
+            .filter { $0.source == .claude }
+            .map(\.scannedFileCount)
+            .reduce(0, +)
+        let parseErrors = sourceStatuses
+            .map(\.parseErrorCount)
+            .reduce(0, +)
 
         return ScanResult(
             events: events.sorted { $0.timestamp < $1.timestamp },
-            codexFileCount: codexFiles.count,
-            claudeFileCount: claudeFiles.count,
+            codexFileCount: codexFileCount,
+            claudeFileCount: claudeFileCount,
             parseErrorCount: parseErrors,
+            sourceStatuses: sourceStatuses,
             scannedAt: Date()
         )
     }
 
     public func findCodexFiles() -> [URL] {
-        let roots = [
-            homeDirectory.appendingPathComponent(".codex/sessions"),
-            homeDirectory.appendingPathComponent(".codex/archived_sessions")
-        ]
-        return roots.flatMap { jsonlFiles(under: $0) }
+        codexRoots().flatMap { jsonlFiles(under: $0.url) }
     }
 
     public func findClaudeFiles() -> [URL] {
-        jsonlFiles(under: homeDirectory.appendingPathComponent(".claude/projects"))
+        jsonlFiles(under: claudeRoot().url)
+    }
+
+    private func scanRoots(modifiedAfter: Date?) -> [RootScan] {
+        (codexRoots() + [claudeRoot()]).map { root in
+            let allFiles = jsonlFiles(under: root.url)
+            let selected = selectedFiles(allFiles, modifiedAfter: modifiedAfter)
+            return RootScan(
+                source: root.source,
+                label: root.label,
+                url: root.url,
+                exists: fileManager.fileExists(atPath: root.url.path),
+                totalFiles: allFiles.count,
+                selectedFiles: selected
+            )
+        }
+    }
+
+    private func codexRoots() -> [LogRoot] {
+        [
+            LogRoot(
+                source: .codex,
+                label: "Codex sessions",
+                url: homeDirectory.appendingPathComponent(".codex/sessions")
+            ),
+            LogRoot(
+                source: .codex,
+                label: "Codex archive",
+                url: homeDirectory.appendingPathComponent(".codex/archived_sessions")
+            )
+        ]
+    }
+
+    private func claudeRoot() -> LogRoot {
+        LogRoot(
+            source: .claude,
+            label: "Claude projects",
+            url: homeDirectory.appendingPathComponent(".claude/projects")
+        )
+    }
+
+    private struct LogRoot {
+        var source: TokenSource
+        var label: String
+        var url: URL
+    }
+
+    private struct RootScan {
+        var source: TokenSource
+        var label: String
+        var url: URL
+        var exists: Bool
+        var totalFiles: Int
+        var selectedFiles: [URL]
+        var parseErrorCount = 0
+
+        var status: ScanSourceStatus {
+            ScanSourceStatus(
+                source: source,
+                label: label,
+                path: url.path,
+                exists: exists,
+                totalFileCount: totalFiles,
+                scannedFileCount: selectedFiles.count,
+                parseErrorCount: parseErrorCount
+            )
+        }
     }
 
     private func jsonlFiles(under root: URL) -> [URL] {

@@ -7,6 +7,7 @@ enum TokenMeterSelfTest {
         try codexParserUsesDeltasAndSkipsRepeatedTotals()
         try claudeParserDeduplicatesRequestIDs()
         try relativeDayRangesIncludeToday()
+        try previousRangesMatchCurrentDuration()
         try fiveMinuteBucketsRoundDown()
         try dashboardRangesExposeShortOptions()
         try dashboardBucketOptionsStayReadable()
@@ -77,6 +78,20 @@ enum TokenMeterSelfTest {
         let sixHours = TimeRangePreset.last6Hours.interval(now: now, calendar: calendar)
         try expect(sixHours.start == date(year: 2026, month: 5, day: 11, hour: 11, minute: 37, calendar: calendar), "6h start")
         try expect(sixHours.end == now, "6h end")
+    }
+
+    private static func previousRangesMatchCurrentDuration() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = date(year: 2026, month: 5, day: 11, hour: 17, minute: 37, calendar: calendar)
+
+        let previous24Hours = TimeRangePreset.last24Hours.previousInterval(now: now, calendar: calendar)
+        try expect(previous24Hours.start == date(year: 2026, month: 5, day: 9, hour: 17, minute: 37, calendar: calendar), "previous 24h start")
+        try expect(previous24Hours.end == date(year: 2026, month: 5, day: 10, hour: 17, minute: 37, calendar: calendar), "previous 24h end")
+
+        let previousToday = TimeRangePreset.today.previousInterval(now: now, calendar: calendar)
+        try expect(previousToday.start == date(year: 2026, month: 5, day: 10, hour: 0, minute: 0, calendar: calendar), "previous today start")
+        try expect(previousToday.end == date(year: 2026, month: 5, day: 10, hour: 17, minute: 37, calendar: calendar), "previous today end")
     }
 
     private static func dashboardRangesExposeShortOptions() throws {
@@ -169,6 +184,11 @@ enum TokenMeterSelfTest {
         try expect(result.claudeFileCount == 45, "scanner includes every recent Claude file")
         try expect(result.events.count == 45, "scanner parses every recent Claude event")
         try expect(Aggregation.totalUsage(events: result.events).total == 45, "scanner totals every recent Claude event")
+        try expect(result.sourceStatuses.count == 3, "scanner reports every source root")
+        let claudeStatus = result.sourceStatuses.first { $0.label == "Claude projects" }
+        try expect(claudeStatus?.exists == true, "scanner reports Claude root exists")
+        try expect(claudeStatus?.totalFileCount == 45, "scanner reports Claude total files")
+        try expect(claudeStatus?.scannedFileCount == 45, "scanner reports Claude scanned files")
     }
 
     private static func temporaryFile(_ content: String) -> URL {

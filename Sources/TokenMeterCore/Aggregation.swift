@@ -72,6 +72,24 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
             return DateInterval(start: earliest ?? Date(timeIntervalSince1970: 0), end: now)
         }
     }
+
+    public func previousInterval(now: Date = Date(), calendar: Calendar = .current, earliest: Date? = nil) -> DateInterval {
+        let current = interval(now: now, calendar: calendar, earliest: earliest)
+
+        switch self {
+        case .today:
+            let previousStart = calendar.date(byAdding: .day, value: -1, to: current.start) ?? current.start.addingTimeInterval(-current.duration)
+            let previousEnd = calendar.date(byAdding: .second, value: Int(current.duration), to: previousStart) ?? current.start
+            return DateInterval(start: previousStart, end: min(previousEnd, current.start))
+        case .yesterday:
+            let previousStart = calendar.date(byAdding: .day, value: -1, to: current.start) ?? current.start.addingTimeInterval(-current.duration)
+            return DateInterval(start: previousStart, end: current.start)
+        case .all:
+            return DateInterval(start: earliest ?? Date(timeIntervalSince1970: 0), end: current.start)
+        default:
+            return DateInterval(start: current.start.addingTimeInterval(-current.duration), end: current.start)
+        }
+    }
 }
 
 public enum BucketInterval: String, CaseIterable, Identifiable, Sendable {
@@ -131,6 +149,22 @@ public enum Aggregation {
         let earliest = events.first?.timestamp
         let interval = range.interval(now: now, calendar: calendar, earliest: earliest)
         return events.filter { event in
+            let sourceMatches = source == .all || event.source == source
+            let timeMatches = event.timestamp >= interval.start && event.timestamp <= interval.end
+            let projectMatches = project == nil || project == "All Projects" || event.projectPath == project
+            let modelMatches = model == nil || model == "All Models" || event.model == model
+            return sourceMatches && timeMatches && projectMatches && modelMatches
+        }
+    }
+
+    public static func filter(
+        events: [TokenEvent],
+        source: TokenSource,
+        interval: DateInterval,
+        project: String?,
+        model: String?
+    ) -> [TokenEvent] {
+        events.filter { event in
             let sourceMatches = source == .all || event.source == source
             let timeMatches = event.timestamp >= interval.start && event.timestamp <= interval.end
             let projectMatches = project == nil || project == "All Projects" || event.projectPath == project

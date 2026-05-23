@@ -19,7 +19,7 @@ struct DashboardView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 8)
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                LazyVStack(alignment: .leading, spacing: 18) {
                     if updates.updateLabel != nil {
                         UpdateAvailableBanner()
                     }
@@ -220,12 +220,12 @@ struct DashboardView: View {
             case .all:
                 inlineMetric(
                     "Codex",
-                    TokenFormatters.tokens(Aggregation.totalUsage(events: model.filteredEvents(source: .codex)).total, format: numberFormat),
+                    TokenFormatters.tokens(model.totalUsage(source: .codex).total, format: numberFormat),
                     color: sourceColor(.codex)
                 )
                 inlineMetric(
                     "Claude Code",
-                    TokenFormatters.tokens(Aggregation.totalUsage(events: model.filteredEvents(source: .claude)).total, format: numberFormat),
+                    TokenFormatters.tokens(model.totalUsage(source: .claude).total, format: numberFormat),
                     color: sourceColor(.claude)
                 )
                 inlineMetric("Sessions", TokenFormatters.integer(model.sessionCount))
@@ -422,9 +422,9 @@ struct DashboardView: View {
         case .all:
             model.timeBuckets
         case .codex:
-            Aggregation.buckets(events: model.filteredEvents(source: .codex), bucket: model.bucket)
+            model.timeBuckets(source: .codex)
         case .claude:
-            Aggregation.buckets(events: model.filteredEvents(source: .claude), bucket: model.bucket)
+            model.timeBuckets(source: .claude)
         }
     }
 
@@ -497,7 +497,7 @@ struct DashboardView: View {
             TokenMenuLabel(icon: "desktopcomputer", title: model.selectedDeviceTitle)
         }
         .menuStyle(.borderlessButton)
-        .frame(maxWidth: 230)
+        .fixedSize()
         .help("Device scope")
     }
 

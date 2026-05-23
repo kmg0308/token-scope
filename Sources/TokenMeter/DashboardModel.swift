@@ -17,6 +17,11 @@ private struct EventFilterKey: Hashable {
     var deviceId: String?
 }
 
+private struct BucketCacheKey: Hashable {
+    var filter: EventFilterKey
+    var bucket: BucketInterval
+}
+
 enum DashboardSection: String, CaseIterable, Identifiable {
     case all = "All"
     case codex = "Codex"
@@ -113,6 +118,11 @@ final class DashboardModel: ObservableObject {
     private var hasLoadedAllEvents = false
     private var eventRevision = 0
     private var filteredEventsCache: [EventFilterKey: [TokenEvent]] = [:]
+    private var totalUsageCache: [EventFilterKey: TokenUsage] = [:]
+    private var previousUsageCache: [EventFilterKey: TokenUsage] = [:]
+    private var bucketCache: [BucketCacheKey: [TimeBucket]] = [:]
+    private var sessionCountCache: [EventFilterKey: Int] = [:]
+    private var deviceCountCache: [EventFilterKey: Int] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -265,7 +275,13 @@ final class DashboardModel: ObservableObject {
     }
 
     var deviceCount: Int {
-        Set(filteredEvents.map(\.deviceId)).count
+        let key = eventFilterKey(source: selectedSection.sourceFilter, project: projectFilter, model: modelFilter)
+        if let cached = deviceCountCache[key] {
+            return cached
+        }
+        let count = Set(filteredEvents.map(\.deviceId)).count
+        deviceCountCache[key] = count
+        return count
     }
 
     func useDefaultICloudSyncFolder() {
@@ -321,14 +337,7 @@ final class DashboardModel: ObservableObject {
         project: String?,
         model: String?
     ) -> [TokenEvent] {
-        let key = EventFilterKey(
-            revision: eventRevision,
-            source: source,
-            range: range,
-            project: project,
-            model: model,
-            deviceId: selectedDeviceId
-        )
+        let key = eventFilterKey(source: source, project: project, model: model)
         if let cached = filteredEventsCache[key] {
             return cached
         }
@@ -345,8 +354,29 @@ final class DashboardModel: ObservableObject {
         return events
     }
 
+    private func eventFilterKey(source: TokenSource, project: String?, model: String?) -> EventFilterKey {
+        EventFilterKey(
+            revision: eventRevision,
+            source: source,
+            range: range,
+            project: project,
+            model: model,
+            deviceId: selectedDeviceId
+        )
+    }
+
     var totalUsage: TokenUsage {
-        Aggregation.totalUsage(events: filteredEvents)
+        totalUsage(source: selectedSection.sourceFilter)
+    }
+
+    func totalUsage(source: TokenSource) -> TokenUsage {
+        let key = eventFilterKey(source: source, project: projectFilter, model: modelFilter)
+        if let cached = totalUsageCache[key] {
+            return cached
+        }
+        let usage = Aggregation.totalUsage(events: cachedFilteredEvents(source: source, project: projectFilter, model: modelFilter))
+        totalUsageCache[key] = usage
+        return usage
     }
 
     var previousFilteredEvents: [TokenEvent] {
@@ -362,11 +392,31 @@ final class DashboardModel: ObservableObject {
     }
 
     var previousTotalUsage: TokenUsage {
-        Aggregation.totalUsage(events: previousFilteredEvents)
+        let key = eventFilterKey(source: selectedSection.sourceFilter, project: projectFilter, model: modelFilter)
+        if let cached = previousUsageCache[key] {
+            return cached
+        }
+        let usage = Aggregation.totalUsage(events: previousFilteredEvents)
+        previousUsageCache[key] = usage
+        return usage
     }
 
     var timeBuckets: [TimeBucket] {
-        Aggregation.buckets(events: filteredEvents, bucket: bucket)
+        timeBuckets(source: selectedSection.sourceFilter)
+    }
+
+    func timeBuckets(source: TokenSource) -> [TimeBucket] {
+        let filter = eventFilterKey(source: source, project: projectFilter, model: modelFilter)
+        let key = BucketCacheKey(filter: filter, bucket: bucket)
+        if let cached = bucketCache[key] {
+            return cached
+        }
+        let buckets = Aggregation.buckets(
+            events: cachedFilteredEvents(source: source, project: projectFilter, model: modelFilter),
+            bucket: bucket
+        )
+        bucketCache[key] = buckets
+        return buckets
     }
 
     var projectRows: [GroupedUsageRow] {
@@ -382,7 +432,13 @@ final class DashboardModel: ObservableObject {
     }
 
     var sessionCount: Int {
-        Set(filteredEvents.map(\.sessionId)).count
+        let key = eventFilterKey(source: selectedSection.sourceFilter, project: projectFilter, model: modelFilter)
+        if let cached = sessionCountCache[key] {
+            return cached
+        }
+        let count = Set(filteredEvents.map(\.sessionId)).count
+        sessionCountCache[key] = count
+        return count
     }
 
     var projectOptions: [String] {
@@ -428,6 +484,11 @@ final class DashboardModel: ObservableObject {
     private func markEventsChanged() {
         eventRevision += 1
         filteredEventsCache.removeAll()
+        totalUsageCache.removeAll()
+        previousUsageCache.removeAll()
+        bucketCache.removeAll()
+        sessionCountCache.removeAll()
+        deviceCountCache.removeAll()
     }
 
     private func markLoadedWindow(eventAfter: Date?) {

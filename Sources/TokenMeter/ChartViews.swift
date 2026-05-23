@@ -14,64 +14,77 @@ struct TokenBarChart: View {
     let numberFormat: TokenNumberFormat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GeometryReader { proxy in
-                let sparseTimeline = usesSparseTimeline
-                let visibleBuckets = visibleBuckets(sparseTimeline: sparseTimeline)
-                let maxValue = niceMax(max(1, visibleBuckets.map(\.usage.total).max() ?? 1))
-                let axisWidth: CGFloat = numberFormat == .full ? 96 : 54
-                let xAxisHeight: CGFloat = 28
-                let plotWidth = max(180, proxy.size.width - axisWidth - 8)
-                let plotHeight = max(80, proxy.size.height - xAxisHeight - 6)
+        GeometryReader { _ in
+            let sparseTimeline = usesSparseTimeline
+            let visibleBuckets = visibleBuckets(sparseTimeline: sparseTimeline)
+            let maxValue = niceMax(max(1, visibleBuckets.map(\.usage.total).max() ?? 1))
 
-                HStack(alignment: .top, spacing: 8) {
-                    yAxis(maxValue: maxValue)
-                        .frame(width: axisWidth, height: plotHeight)
-
-                    VStack(spacing: 6) {
-                        plotArea(buckets: visibleBuckets, maxValue: maxValue, sparseTimeline: sparseTimeline)
-                            .frame(height: plotHeight)
-                        xAxis(buckets: sparseTimeline ? [] : visibleBuckets)
-                            .frame(height: xAxisHeight)
-                    }
-                    .frame(width: plotWidth, alignment: .leading)
-                }
+            Canvas(opaque: false, rendersAsynchronously: true) { context, size in
+                drawChart(
+                    context: &context,
+                    size: size,
+                    buckets: visibleBuckets,
+                    maxValue: maxValue,
+                    sparseTimeline: sparseTimeline
+                )
             }
-            chartLegend
         }
         .padding(16)
         .tokenSurface(elevated: true)
     }
 
-    private func plotArea(buckets: [TimeBucket], maxValue: Int, sparseTimeline: Bool) -> some View {
-        ZStack {
-            Canvas(opaque: false, rendersAsynchronously: true) { context, size in
-                drawPlot(
-                    context: &context,
-                    size: size,
-                    buckets: buckets,
-                    maxValue: maxValue,
-                    sparseTimeline: sparseTimeline
-                )
-            }
-
-            if buckets.isEmpty {
-                Text("No data")
-                    .font(.system(size: 12))
-                    .foregroundStyle(TokenMeterTheme.secondaryText)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-    }
-
-    private func drawPlot(
+    private func drawChart(
         context: inout GraphicsContext,
         size: CGSize,
         buckets: [TimeBucket],
         maxValue: Int,
         sparseTimeline: Bool
     ) {
-        drawGrid(context: &context, size: size)
+        let axisWidth: CGFloat = numberFormat == .full ? 96 : 54
+        let xAxisHeight: CGFloat = 28
+        let legendHeight: CGFloat = 24
+        let plotX = axisWidth + 8
+        let plotWidth = max(180, size.width - plotX)
+        let plotHeight = max(80, size.height - xAxisHeight - legendHeight - 14)
+
+        drawYAxis(context: &context, maxValue: maxValue, axisWidth: axisWidth, plotHeight: plotHeight)
+        drawPlot(
+            context: &context,
+            size: CGSize(width: plotWidth, height: plotHeight),
+            origin: CGPoint(x: plotX, y: 0),
+            buckets: buckets,
+            maxValue: maxValue,
+            sparseTimeline: sparseTimeline
+        )
+        drawXAxis(
+            context: &context,
+            buckets: sparseTimeline ? [] : buckets,
+            plotX: plotX,
+            y: plotHeight + 6,
+            width: plotWidth
+        )
+        drawLegend(context: &context, y: plotHeight + xAxisHeight + 10)
+
+        if buckets.isEmpty {
+            context.draw(
+                Text("No data")
+                    .font(.system(size: 12))
+                    .foregroundColor(TokenMeterTheme.secondaryText),
+                at: CGPoint(x: plotX + plotWidth / 2, y: plotHeight / 2),
+                anchor: .center
+            )
+        }
+    }
+
+    private func drawPlot(
+        context: inout GraphicsContext,
+        size: CGSize,
+        origin: CGPoint,
+        buckets: [TimeBucket],
+        maxValue: Int,
+        sparseTimeline: Bool
+    ) {
+        drawGrid(context: &context, origin: origin, size: size)
 
         guard !buckets.isEmpty else { return }
 
@@ -84,8 +97,9 @@ struct TokenBarChart: View {
                     context: &context,
                     bucket: bucket,
                     maxValue: maxValue,
-                    x: x - width / 2,
+                    x: origin.x + x - width / 2,
                     width: width,
+                    originY: origin.y,
                     height: size.height
                 )
             }
@@ -98,21 +112,22 @@ struct TokenBarChart: View {
                     context: &context,
                     bucket: bucket,
                     maxValue: maxValue,
-                    x: x,
+                    x: origin.x + x,
                     width: width,
+                    originY: origin.y,
                     height: size.height
                 )
             }
         }
     }
 
-    private func drawGrid(context: inout GraphicsContext, size: CGSize) {
+    private func drawGrid(context: inout GraphicsContext, origin: CGPoint, size: CGSize) {
         let lineColor = Color.white.opacity(0.055)
         for index in 0..<5 {
-            let y = size.height * CGFloat(index) / 4
+            let y = origin.y + size.height * CGFloat(index) / 4
             var path = Path()
-            path.move(to: CGPoint(x: 0, y: y))
-            path.addLine(to: CGPoint(x: size.width, y: y))
+            path.move(to: CGPoint(x: origin.x, y: y))
+            path.addLine(to: CGPoint(x: origin.x + size.width, y: y))
             context.stroke(path, with: .color(lineColor), lineWidth: 1)
         }
     }
@@ -123,10 +138,11 @@ struct TokenBarChart: View {
         maxValue: Int,
         x: CGFloat,
         width: CGFloat,
+        originY: CGFloat,
         height: CGFloat
     ) {
         let totalHeight = max(2, height * CGFloat(bucket.usage.total) / CGFloat(maxValue))
-        var y = height - totalHeight
+        var y = originY + height - totalHeight
 
         switch mode {
         case .bySource:
@@ -229,47 +245,54 @@ struct TokenBarChart: View {
         y += segmentHeight
     }
 
-    private func yAxis(maxValue: Int) -> some View {
-        VStack(alignment: .trailing) {
-            let ticks = yAxisTickValues(maxValue: maxValue)
-            ForEach(ticks.indices, id: \.self) { index in
+    private func drawYAxis(
+        context: inout GraphicsContext,
+        maxValue: Int,
+        axisWidth: CGFloat,
+        plotHeight: CGFloat
+    ) {
+        let ticks = yAxisTickValues(maxValue: maxValue)
+        for index in ticks.indices {
+            let y = plotHeight * CGFloat(index) / CGFloat(max(1, ticks.count - 1))
+            let anchor: UnitPoint = {
+                if index == ticks.startIndex { return .topTrailing }
+                if index == ticks.index(before: ticks.endIndex) { return .bottomTrailing }
+                return .trailing
+            }()
+            context.draw(
                 Text(TokenFormatters.tokens(ticks[index], format: numberFormat))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                if index < ticks.count - 1 {
-                    Spacer()
-                }
-            }
+                    .font(.system(size: 10))
+                    .foregroundColor(TokenMeterTheme.tertiaryText)
+                    .monospacedDigit(),
+                at: CGPoint(x: axisWidth, y: y),
+                anchor: anchor
+            )
         }
-        .font(.system(size: 10))
-        .foregroundStyle(TokenMeterTheme.tertiaryText)
-        .monospacedDigit()
     }
 
     private func yAxisTickValues(maxValue: Int) -> [Int] {
         [maxValue, maxValue * 3 / 4, maxValue / 2, maxValue / 4, 0]
     }
 
-    private func xAxis(buckets: [TimeBucket]) -> some View {
-        GeometryReader { proxy in
-            let ticks = axisTicks(buckets: buckets, width: proxy.size.width)
-            ZStack(alignment: .topLeading) {
-                ForEach(ticks) { tick in
-                    VStack(spacing: 4) {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.14))
-                            .frame(width: 1, height: 5)
-                        Text(tick.title)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-                    }
-                    .frame(width: tick.width)
-                    .position(x: tick.x, y: 12)
-                }
-            }
+    private func drawXAxis(
+        context: inout GraphicsContext,
+        buckets: [TimeBucket],
+        plotX: CGFloat,
+        y: CGFloat,
+        width: CGFloat
+    ) {
+        for tick in axisTicks(buckets: buckets, width: width) {
+            let x = plotX + tick.x
+            let tickRect = CGRect(x: x - 0.5, y: y, width: 1, height: 5)
+            context.fill(Path(tickRect), with: .color(Color.white.opacity(0.14)))
+            context.draw(
+                Text(tick.title)
+                    .font(.system(size: 10))
+                    .foregroundColor(TokenMeterTheme.tertiaryText),
+                at: CGPoint(x: x, y: y + 10),
+                anchor: .top
+            )
         }
-        .font(.system(size: 10))
-        .foregroundStyle(TokenMeterTheme.tertiaryText)
     }
 
     private func axisTicks(buckets: [TimeBucket], width: CGFloat) -> [AxisTick] {
@@ -499,40 +522,55 @@ struct TokenBarChart: View {
         return min(3, max(0.6, slotWidth * 0.82))
     }
 
-    private var chartLegend: some View {
-        HStack(spacing: 14) {
-            switch mode {
-            case .bySource:
-                legend("Codex", .codex)
-                legend("Claude Code", .claude)
-            case .byTokenKind:
-                legend("Input", componentColor(.input))
-                legend("Cache", componentColor(.cache))
-                legend("Output", componentColor(.output))
-                legend("Reasoning", componentColor(.reasoning))
-            }
-            Spacer()
+    private func drawLegend(context: inout GraphicsContext, y: CGFloat) {
+        var x: CGFloat = 0
+
+        for item in legendItems {
+            let width = legendWidth(for: item.title)
+            let rect = CGRect(x: x, y: y, width: width, height: 24)
+            context.fill(
+                Path(roundedRect: rect, cornerRadius: TokenMeterTheme.compactControlRadius),
+                with: .color(TokenMeterTheme.control)
+            )
+            context.stroke(
+                Path(roundedRect: rect, cornerRadius: TokenMeterTheme.compactControlRadius),
+                with: .color(TokenMeterTheme.subtleBorder),
+                lineWidth: 1
+            )
+            context.fill(
+                Path(roundedRect: CGRect(x: x + 8, y: y + 8, width: 12, height: 8), cornerRadius: 2),
+                with: .color(item.color)
+            )
+            context.draw(
+                Text(item.title)
+                    .font(.system(size: 11))
+                    .foregroundColor(TokenMeterTheme.secondaryText),
+                at: CGPoint(x: x + 26, y: y + 12),
+                anchor: .leading
+            )
+            x += width + 10
         }
-        .font(.system(size: 11))
-        .foregroundStyle(TokenMeterTheme.secondaryText)
     }
 
-    private func legend(_ title: String, _ source: TokenSource) -> some View {
-        legend(title, sourceColor(source))
+    private var legendItems: [(title: String, color: Color)] {
+        switch mode {
+        case .bySource:
+            [
+                ("Codex", sourceColor(.codex)),
+                ("Claude Code", sourceColor(.claude))
+            ]
+        case .byTokenKind:
+            [
+                ("Input", componentColor(.input)),
+                ("Cache", componentColor(.cache)),
+                ("Output", componentColor(.output)),
+                ("Reasoning", componentColor(.reasoning))
+            ]
+        }
     }
 
-    private func legend(_ title: String, _ color: Color) -> some View {
-        HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(color)
-                .frame(width: 12, height: 8)
-            Text(title)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 24)
-        .background {
-            TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
-        }
+    private func legendWidth(for title: String) -> CGFloat {
+        max(58, CGFloat(title.count) * 6.4 + 34)
     }
 
     private func niceMax(_ value: Int) -> Int {
@@ -588,14 +626,6 @@ private struct AxisTick: Identifiable {
     let title: String
     let x: CGFloat
     let width: CGFloat
-}
-
-struct BarSegment {
-    let id: String
-    let label: String
-    let value: Int
-    let total: Int
-    let color: Color
 }
 
 struct ProportionBar: View {
@@ -785,30 +815,5 @@ func componentColor(_ kind: TokenComponentKind) -> Color {
         return Color(red: 1.0, green: 0.76, blue: 0.30)
     case .reasoning:
         return Color(red: 0.72, green: 0.53, blue: 1.0)
-    }
-}
-
-func chartSegments(for bucket: TimeBucket, mode: ChartMode) -> [BarSegment] {
-    switch mode {
-    case .bySource:
-        let codex = bucket.sourceUsage[.codex]?.total ?? 0
-        let claude = bucket.sourceUsage[.claude]?.total ?? 0
-        let total = max(1, codex + claude)
-        return [
-            BarSegment(id: "codex", label: "Codex", value: codex, total: total, color: sourceColor(.codex)),
-            BarSegment(id: "claude", label: "Claude Code", value: claude, total: total, color: sourceColor(.claude))
-        ].filter { $0.value > 0 }
-    case .byTokenKind(let source):
-        let components = bucket.usage.displayComponents(source: source)
-        let total = max(1, components.map(\.value).reduce(0, +))
-        return components.map { component in
-            BarSegment(
-                id: component.kind.rawValue,
-                label: component.kind.rawValue,
-                value: component.value,
-                total: total,
-                color: componentColor(component.kind)
-            )
-        }
     }
 }

@@ -12,9 +12,10 @@ struct TokenBarChart: View {
     let bucketInterval: BucketInterval
     let mode: ChartMode
     let numberFormat: TokenNumberFormat
+    @State private var hoveredBucket: TimeBucket?
 
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { proxy in
             let sparseTimeline = usesSparseTimeline
             let visibleBuckets = visibleBuckets(sparseTimeline: sparseTimeline)
             let maxValue = niceMax(max(1, visibleBuckets.map(\.usage.total).max() ?? 1))
@@ -28,6 +29,25 @@ struct TokenBarChart: View {
                     sparseTimeline: sparseTimeline
                 )
             }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let point):
+                    let bucket = hoveredBucket(
+                        at: point,
+                        in: proxy.size,
+                        buckets: visibleBuckets,
+                        sparseTimeline: sparseTimeline
+                    )
+                    if hoveredBucket?.id != bucket?.id {
+                        hoveredBucket = bucket
+                    }
+                case .ended:
+                    if hoveredBucket != nil {
+                        hoveredBucket = nil
+                    }
+                }
+            }
         }
         .padding(16)
         .tokenSurface(elevated: true)
@@ -40,18 +60,13 @@ struct TokenBarChart: View {
         maxValue: Int,
         sparseTimeline: Bool
     ) {
-        let axisWidth: CGFloat = numberFormat == .full ? 96 : 54
-        let xAxisHeight: CGFloat = 28
-        let legendHeight: CGFloat = 24
-        let plotX = axisWidth + 8
-        let plotWidth = max(180, size.width - plotX)
-        let plotHeight = max(80, size.height - xAxisHeight - legendHeight - 14)
+        let layout = chartLayout(size: size)
 
-        drawYAxis(context: &context, maxValue: maxValue, axisWidth: axisWidth, plotHeight: plotHeight)
+        drawYAxis(context: &context, maxValue: maxValue, axisWidth: layout.axisWidth, plotHeight: layout.plotHeight)
         drawPlot(
             context: &context,
-            size: CGSize(width: plotWidth, height: plotHeight),
-            origin: CGPoint(x: plotX, y: 0),
+            size: CGSize(width: layout.plotWidth, height: layout.plotHeight),
+            origin: CGPoint(x: layout.plotX, y: 0),
             buckets: buckets,
             maxValue: maxValue,
             sparseTimeline: sparseTimeline
@@ -59,21 +74,58 @@ struct TokenBarChart: View {
         drawXAxis(
             context: &context,
             buckets: sparseTimeline ? [] : buckets,
-            plotX: plotX,
-            y: plotHeight + 6,
-            width: plotWidth
+            plotX: layout.plotX,
+            y: layout.plotHeight + 6,
+            width: layout.plotWidth
         )
-        drawLegend(context: &context, y: plotHeight + xAxisHeight + 10)
+        drawLegend(context: &context, y: layout.plotHeight + layout.xAxisHeight + 10)
+
+        if let hoveredBucket,
+           buckets.contains(where: { $0.id == hoveredBucket.id }) {
+            drawHoverBand(
+                context: &context,
+                bucket: hoveredBucket,
+                layout: layout,
+                buckets: buckets,
+                sparseTimeline: sparseTimeline
+            )
+            drawTooltip(
+                context: &context,
+                bucket: hoveredBucket,
+                size: size,
+                layout: layout,
+                buckets: buckets,
+                maxValue: maxValue,
+                sparseTimeline: sparseTimeline
+            )
+        }
 
         if buckets.isEmpty {
             context.draw(
                 Text("No data")
                     .font(.system(size: 12))
                     .foregroundColor(TokenMeterTheme.secondaryText),
-                at: CGPoint(x: plotX + plotWidth / 2, y: plotHeight / 2),
+                at: CGPoint(x: layout.plotX + layout.plotWidth / 2, y: layout.plotHeight / 2),
                 anchor: .center
             )
         }
+    }
+
+    private func chartLayout(size: CGSize) -> ChartLayout {
+        let axisWidth: CGFloat = numberFormat == .full ? 96 : 54
+        let xAxisHeight: CGFloat = 28
+        let legendHeight: CGFloat = 24
+        let plotX = axisWidth + 8
+        let plotWidth = max(180, size.width - plotX)
+        let plotHeight = max(80, size.height - xAxisHeight - legendHeight - 14)
+        return ChartLayout(
+            axisWidth: axisWidth,
+            xAxisHeight: xAxisHeight,
+            legendHeight: legendHeight,
+            plotX: plotX,
+            plotWidth: plotWidth,
+            plotHeight: plotHeight
+        )
     }
 
     private func drawPlot(
@@ -245,6 +297,107 @@ struct TokenBarChart: View {
         y += segmentHeight
     }
 
+    private func drawHoverBand(
+        context: inout GraphicsContext,
+        bucket: TimeBucket,
+        layout: ChartLayout,
+        buckets: [TimeBucket],
+        sparseTimeline: Bool
+    ) {
+        guard let frame = hoverFrame(
+            for: bucket,
+            layout: layout,
+            buckets: buckets,
+            sparseTimeline: sparseTimeline
+        ) else {
+            return
+        }
+
+        context.fill(
+            Path(roundedRect: frame, cornerRadius: 5),
+            with: .color(Color.white.opacity(0.055))
+        )
+    }
+
+    private func drawTooltip(
+        context: inout GraphicsContext,
+        bucket: TimeBucket,
+        size: CGSize,
+        layout: ChartLayout,
+        buckets: [TimeBucket],
+        maxValue: Int,
+        sparseTimeline: Bool
+    ) {
+        let segments = chartSegments(for: bucket)
+        let width = tooltipWidth
+        let height = tooltipHeight(segmentCount: segments.count)
+        let frame = tooltipFrame(
+            for: bucket,
+            size: size,
+            layout: layout,
+            buckets: buckets,
+            maxValue: maxValue,
+            sparseTimeline: sparseTimeline,
+            width: width,
+            height: height
+        )
+        let shape = Path(roundedRect: frame, cornerRadius: TokenMeterTheme.controlRadius)
+
+        context.fill(shape, with: .color(TokenMeterTheme.elevatedSurface))
+        context.stroke(shape, with: .color(TokenMeterTheme.border), lineWidth: 1)
+
+        let left = frame.minX + 10
+        var y = frame.minY + 9
+        context.draw(
+            Text(bucket.start.formatted(date: .abbreviated, time: .shortened))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(TokenMeterTheme.secondaryText),
+            at: CGPoint(x: left, y: y),
+            anchor: .topLeading
+        )
+
+        y += 20
+        context.draw(
+            Text(TokenFormatters.tokens(bucket.usage.total, format: numberFormat))
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(TokenMeterTheme.primaryText)
+                .monospacedDigit(),
+            at: CGPoint(x: left, y: y),
+            anchor: .topLeading
+        )
+        context.draw(
+            Text("tokens")
+                .font(.system(size: 10))
+                .foregroundColor(TokenMeterTheme.secondaryText),
+            at: CGPoint(x: frame.maxX - 10, y: y + 5),
+            anchor: .topTrailing
+        )
+
+        y += 29
+        for segment in segments {
+            context.fill(
+                Path(ellipseIn: CGRect(x: left, y: y + 4, width: 7, height: 7)),
+                with: .color(segment.color)
+            )
+            context.draw(
+                Text(segment.label)
+                    .font(.system(size: 11))
+                    .foregroundColor(TokenMeterTheme.secondaryText),
+                at: CGPoint(x: left + 14, y: y),
+                anchor: .topLeading
+            )
+            context.draw(
+                Text(TokenFormatters.tokens(segment.value, format: numberFormat))
+                    .font(.system(size: 11))
+                    .foregroundColor(TokenMeterTheme.primaryText)
+                    .monospacedDigit(),
+                at: CGPoint(x: frame.maxX - 10, y: y),
+                anchor: .topTrailing
+            )
+            y += 18
+        }
+    }
+
     private func drawYAxis(
         context: inout GraphicsContext,
         maxValue: Int,
@@ -370,6 +523,114 @@ struct TokenBarChart: View {
     private func clampedAxisX(_ x: CGFloat, width: CGFloat, labelWidth: CGFloat) -> CGFloat {
         let half = labelWidth / 2
         return min(max(x, half), max(half, width - half))
+    }
+
+    private func hoveredBucket(
+        at point: CGPoint,
+        in size: CGSize,
+        buckets: [TimeBucket],
+        sparseTimeline: Bool
+    ) -> TimeBucket? {
+        let layout = chartLayout(size: size)
+        guard point.x >= layout.plotX,
+              point.x <= layout.plotX + layout.plotWidth,
+              point.y >= 0,
+              point.y <= layout.plotHeight,
+              !buckets.isEmpty else {
+            return nil
+        }
+
+        let plotX = point.x - layout.plotX
+        if sparseTimeline {
+            let interval = range.interval(earliest: buckets.map(\.start).min())
+            let width = sparseBarWidth(plotWidth: layout.plotWidth, bucketCount: buckets.count)
+            let nonEmptyBuckets = buckets.filter { $0.usage.total > 0 }
+            guard let nearest = nonEmptyBuckets.min(by: {
+                abs(timelineX(for: $0.start, width: layout.plotWidth, interval: interval) - plotX)
+                    < abs(timelineX(for: $1.start, width: layout.plotWidth, interval: interval) - plotX)
+            }) else {
+                return nil
+            }
+            let distance = abs(timelineX(for: nearest.start, width: layout.plotWidth, interval: interval) - plotX)
+            return distance <= max(10, width * 1.8) ? nearest : nil
+        }
+
+        let slotWidth = layout.plotWidth / CGFloat(max(1, buckets.count))
+        let index = min(max(0, Int(plotX / max(1, slotWidth))), buckets.count - 1)
+        return buckets[index].usage.total > 0 ? buckets[index] : nil
+    }
+
+    private func hoverFrame(
+        for bucket: TimeBucket,
+        layout: ChartLayout,
+        buckets: [TimeBucket],
+        sparseTimeline: Bool
+    ) -> CGRect? {
+        guard !buckets.isEmpty else { return nil }
+
+        if sparseTimeline {
+            let interval = range.interval(earliest: buckets.map(\.start).min())
+            let width = sparseBarWidth(plotWidth: layout.plotWidth, bucketCount: buckets.count)
+            let centerX = layout.plotX + timelineX(for: bucket.start, width: layout.plotWidth, interval: interval)
+            return CGRect(
+                x: centerX - max(10, width * 1.8) / 2,
+                y: 0,
+                width: max(10, width * 1.8),
+                height: layout.plotHeight
+            )
+        }
+
+        guard let index = buckets.firstIndex(where: { $0.id == bucket.id }) else { return nil }
+        let slotWidth = layout.plotWidth / CGFloat(max(1, buckets.count))
+        let width = barWidth(slotWidth: slotWidth, count: buckets.count)
+        let centerX = layout.plotX + slotWidth * CGFloat(index) + slotWidth / 2
+        let bandWidth = min(slotWidth * 0.84, max(width + 12, width))
+        return CGRect(x: centerX - bandWidth / 2, y: 0, width: bandWidth, height: layout.plotHeight)
+    }
+
+    private func tooltipFrame(
+        for bucket: TimeBucket,
+        size: CGSize,
+        layout: ChartLayout,
+        buckets: [TimeBucket],
+        maxValue: Int,
+        sparseTimeline: Bool,
+        width: CGFloat,
+        height: CGFloat
+    ) -> CGRect {
+        let centerX = bucketCenterX(
+            for: bucket,
+            layout: layout,
+            buckets: buckets,
+            sparseTimeline: sparseTimeline
+        ) ?? (layout.plotX + layout.plotWidth / 2)
+        let barHeight = max(2, layout.plotHeight * CGFloat(bucket.usage.total) / CGFloat(maxValue))
+        let rawX = centerX - width / 2
+        let rawY = layout.plotHeight - barHeight - height - 10
+        let maxX = max(0, size.width - width)
+        let maxY = max(0, size.height - height)
+        return CGRect(
+            x: min(max(0, rawX), maxX),
+            y: min(max(4, rawY), maxY),
+            width: width,
+            height: height
+        )
+    }
+
+    private func bucketCenterX(
+        for bucket: TimeBucket,
+        layout: ChartLayout,
+        buckets: [TimeBucket],
+        sparseTimeline: Bool
+    ) -> CGFloat? {
+        if sparseTimeline {
+            let interval = range.interval(earliest: buckets.map(\.start).min())
+            return layout.plotX + timelineX(for: bucket.start, width: layout.plotWidth, interval: interval)
+        }
+
+        guard let index = buckets.firstIndex(where: { $0.id == bucket.id }) else { return nil }
+        let slotWidth = layout.plotWidth / CGFloat(max(1, buckets.count))
+        return layout.plotX + slotWidth * CGFloat(index) + slotWidth / 2
     }
 
     private func visibleBuckets(sparseTimeline: Bool) -> [TimeBucket] {
@@ -573,6 +834,34 @@ struct TokenBarChart: View {
         max(58, CGFloat(title.count) * 6.4 + 34)
     }
 
+    private var tooltipWidth: CGFloat {
+        numberFormat == .full ? 246 : 196
+    }
+
+    private func tooltipHeight(segmentCount: Int) -> CGFloat {
+        CGFloat(76 + segmentCount * 18)
+    }
+
+    private func chartSegments(for bucket: TimeBucket) -> [ChartSegment] {
+        switch mode {
+        case .bySource:
+            let codex = bucket.sourceUsage[.codex]?.total ?? 0
+            let claude = bucket.sourceUsage[.claude]?.total ?? 0
+            return [
+                ChartSegment(label: "Codex", value: codex, color: sourceColor(.codex)),
+                ChartSegment(label: "Claude Code", value: claude, color: sourceColor(.claude))
+            ].filter { $0.value > 0 }
+        case .byTokenKind(let source):
+            return bucket.usage.displayComponents(source: source).map { component in
+                ChartSegment(
+                    label: component.kind.rawValue,
+                    value: component.value,
+                    color: componentColor(component.kind)
+                )
+            }
+        }
+    }
+
     private func niceMax(_ value: Int) -> Int {
         guard value > 0 else { return 1 }
         let magnitude = pow(10.0, floor(log10(Double(value))))
@@ -626,6 +915,21 @@ private struct AxisTick: Identifiable {
     let title: String
     let x: CGFloat
     let width: CGFloat
+}
+
+private struct ChartLayout {
+    let axisWidth: CGFloat
+    let xAxisHeight: CGFloat
+    let legendHeight: CGFloat
+    let plotX: CGFloat
+    let plotWidth: CGFloat
+    let plotHeight: CGFloat
+}
+
+private struct ChartSegment {
+    let label: String
+    let value: Int
+    let color: Color
 }
 
 struct ProportionBar: View {

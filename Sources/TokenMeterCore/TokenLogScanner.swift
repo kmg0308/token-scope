@@ -4,15 +4,18 @@ public final class TokenLogScanner: @unchecked Sendable {
     private let homeDirectory: URL
     private let fileManager: FileManager
     private let localDevice: TokenDeviceMetadata
+    private let cacheStore: TokenEventCacheStore?
 
     public init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         fileManager: FileManager = .default,
-        localDevice: TokenDeviceMetadata = .localFallback
+        localDevice: TokenDeviceMetadata = .localFallback,
+        cacheStore: TokenEventCacheStore? = TokenEventCacheStore.defaultStore()
     ) {
         self.homeDirectory = homeDirectory
         self.fileManager = fileManager
         self.localDevice = localDevice
+        self.cacheStore = cacheStore
     }
 
     public func scan(
@@ -23,6 +26,7 @@ public final class TokenLogScanner: @unchecked Sendable {
     ) -> ScanResult {
         guard !isCancelled() else { return ScanResult() }
         var roots = scanRoots(modifiedAfter: modifiedAfter)
+        cleanupMissingLocalCacheEntries(roots: roots)
         var localEvents: [TokenEvent] = []
 
         for index in roots.indices {
@@ -31,10 +35,13 @@ public final class TokenLogScanner: @unchecked Sendable {
             var parseErrors = 0
             for file in files {
                 guard !isCancelled() else { break }
-                do {
-                    let parsed = try TokenLogParser.parseCodexFile(at: file, isCancelled: isCancelled)
-                    localEvents.append(contentsOf: parsed.map { $0.withDevice(localDevice) })
-                } catch {
+                let result = cachedOrParsedEvents(for: file, isCancelled: isCancelled) {
+                    try TokenLogParser.parseCodexFile(at: file.url, isCancelled: isCancelled)
+                }
+                switch result {
+                case .success(let events):
+                    localEvents.append(contentsOf: events)
+                case .failure:
                     parseErrors += 1
                 }
             }
@@ -47,10 +54,13 @@ public final class TokenLogScanner: @unchecked Sendable {
             var parseErrors = 0
             for file in files {
                 guard !isCancelled() else { break }
-                do {
-                    let parsed = try TokenLogParser.parseClaudeFile(at: file, isCancelled: isCancelled)
-                    localEvents.append(contentsOf: parsed.map { $0.withDevice(localDevice) })
-                } catch {
+                let result = cachedOrParsedEvents(for: file, isCancelled: isCancelled) {
+                    try TokenLogParser.parseClaudeFile(at: file.url, isCancelled: isCancelled)
+                }
+                switch result {
+                case .success(let events):
+                    localEvents.append(contentsOf: events)
+                case .failure:
                     parseErrors += 1
                 }
             }
@@ -75,6 +85,7 @@ public final class TokenLogScanner: @unchecked Sendable {
             syncFolder: syncFolder,
             replaceSyncLedger: replaceSyncLedger,
             importedAfter: modifiedAfter,
+            cacheStore: cacheStore,
             isCancelled: isCancelled
         )
         let events = deduplicated(events: localEvents + syncOutcome.events)
@@ -91,16 +102,20 @@ public final class TokenLogScanner: @unchecked Sendable {
     }
 
     public func findCodexFiles() -> [URL] {
-        codexRoots().flatMap { jsonlFiles(under: $0.url) }
+        codexRoots().flatMap { jsonlFileURLs(under: $0.url) }
     }
 
     public func findClaudeFiles() -> [URL] {
-        jsonlFiles(under: claudeRoot().url)
+        jsonlFileURLs(under: claudeRoot().url)
+    }
+
+    public func clearCache() throws {
+        try cacheStore?.clear()
     }
 
     private func scanRoots(modifiedAfter: Date?) -> [RootScan] {
         (codexRoots() + [claudeRoot()]).map { root in
-            let allFiles = jsonlFiles(under: root.url)
+            let allFiles = jsonlFiles(under: root.url, source: root.source)
             let selected = selectedFiles(allFiles, modifiedAfter: modifiedAfter)
             return RootScan(
                 source: root.source,
@@ -108,9 +123,16 @@ public final class TokenLogScanner: @unchecked Sendable {
                 url: root.url,
                 exists: fileManager.fileExists(atPath: root.url.path),
                 totalFiles: allFiles.count,
-                selectedFiles: selected
+                selectedFiles: selected,
+                allFilePaths: allFiles.map(\.cachePath)
             )
         }
+    }
+
+    private func cleanupMissingLocalCacheEntries(roots: [RootScan]) {
+        guard let cacheStore else { return }
+        let paths = Set(roots.flatMap(\.allFilePaths))
+        try? cacheStore.removeMissingOrigins(originKind: .localLog, keeping: paths)
     }
 
     private func codexRoots() -> [LogRoot] {
@@ -148,7 +170,8 @@ public final class TokenLogScanner: @unchecked Sendable {
         var url: URL
         var exists: Bool
         var totalFiles: Int
-        var selectedFiles: [URL]
+        var selectedFiles: [LogFile]
+        var allFilePaths: [String]
         var parseErrorCount = 0
 
         var status: ScanSourceStatus {
@@ -164,7 +187,30 @@ public final class TokenLogScanner: @unchecked Sendable {
         }
     }
 
-    private func jsonlFiles(under root: URL) -> [URL] {
+    private struct LogFile {
+        var url: URL
+        var cachePath: String
+        var source: TokenSource
+        var size: Int64
+        var modificationDate: Date
+
+        func cacheSnapshot(for device: TokenDeviceMetadata) -> TokenEventCacheStore.FileSnapshot {
+            TokenEventCacheStore.FileSnapshot(
+                path: cachePath,
+                source: source,
+                size: size,
+                modifiedAt: modificationDate,
+                deviceId: device.id
+            )
+        }
+    }
+
+    private enum FileEventResult {
+        case success([TokenEvent])
+        case failure
+    }
+
+    private func jsonlFileURLs(under root: URL) -> [URL] {
         guard fileManager.fileExists(atPath: root.path) else { return [] }
         guard let enumerator = fileManager.enumerator(
             at: root,
@@ -181,20 +227,65 @@ public final class TokenLogScanner: @unchecked Sendable {
         return files
     }
 
-    private func selectedFiles(_ files: [URL], modifiedAfter: Date?) -> [URL] {
+    private func jsonlFiles(under root: URL, source: TokenSource) -> [LogFile] {
+        jsonlFileURLs(under: root).compactMap { url in
+            guard let snapshot = TokenEventCacheStore.FileSnapshot.make(
+                for: url,
+                source: source,
+                deviceId: nil,
+                fileManager: fileManager
+            ) else {
+                return nil
+            }
+            return LogFile(
+                url: url,
+                cachePath: snapshot.path,
+                source: source,
+                size: snapshot.size,
+                modificationDate: snapshot.modifiedAt
+            )
+        }
+    }
+
+    private func selectedFiles(_ files: [LogFile], modifiedAfter: Date?) -> [LogFile] {
         let filtered = files.filter { url in
             if let modifiedAfter {
-                guard let date = modificationDate(url), date >= modifiedAfter else { return false }
+                guard url.modificationDate >= modifiedAfter else { return false }
             }
             return true
         }
         return filtered.sorted {
-            (modificationDate($0) ?? .distantPast) > (modificationDate($1) ?? .distantPast)
+            $0.modificationDate > $1.modificationDate
         }
     }
 
-    private func modificationDate(_ url: URL) -> Date? {
-        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    private func cachedOrParsedEvents(
+        for file: LogFile,
+        isCancelled: () -> Bool,
+        parse: () throws -> [TokenEvent]
+    ) -> FileEventResult {
+        let snapshot = file.cacheSnapshot(for: localDevice)
+        if let cached = try? cacheStore?.cachedEvents(for: snapshot, originKind: .localLog) {
+            switch cached {
+            case .events(let events):
+                return .success(events)
+            case .parseError:
+                return .failure
+            }
+        }
+
+        do {
+            let events = try parse().map { $0.withDevice(localDevice) }
+            if !isCancelled() {
+                try? cacheStore?.replaceEvents(events, for: snapshot, originKind: .localLog)
+            }
+            return .success(events)
+        } catch {
+            if !isCancelled() {
+                try? cacheStore?.replaceEvents([], for: snapshot, originKind: .localLog, parseError: true)
+            }
+            return .failure
+        }
     }
 
     private func syncEvents(
@@ -202,6 +293,7 @@ public final class TokenLogScanner: @unchecked Sendable {
         syncFolder: URL?,
         replaceSyncLedger: Bool,
         importedAfter: Date?,
+        cacheStore: TokenEventCacheStore?,
         isCancelled: () -> Bool
     ) -> (events: [TokenEvent], status: SyncFolderStatus) {
         guard let syncFolder else {
@@ -211,7 +303,8 @@ public final class TokenLogScanner: @unchecked Sendable {
         let store = TokenSyncLedgerStore(
             folder: syncFolder,
             localDevice: localDevice,
-            fileManager: fileManager
+            fileManager: fileManager,
+            cacheStore: cacheStore
         )
         return store.synchronize(
             localEvents: localEvents,
@@ -224,7 +317,14 @@ public final class TokenLogScanner: @unchecked Sendable {
     private func deduplicated(events: [TokenEvent]) -> [TokenEvent] {
         var eventsByKey: [String: TokenEvent] = [:]
         for event in events {
-            eventsByKey["\(event.deviceId)|\(event.id)"] = event
+            let key = "\(event.deviceId)|\(event.id)"
+            if let existing = eventsByKey[key] {
+                if eventHasLocalDetails(event) || !eventHasLocalDetails(existing) {
+                    eventsByKey[key] = event
+                }
+            } else {
+                eventsByKey[key] = event
+            }
         }
         return eventsByKey.values.sorted {
             if $0.timestamp == $1.timestamp {
@@ -232,5 +332,9 @@ public final class TokenLogScanner: @unchecked Sendable {
             }
             return $0.timestamp < $1.timestamp
         }
+    }
+
+    private func eventHasLocalDetails(_ event: TokenEvent) -> Bool {
+        !event.rawFilePath.hasPrefix("sync://")
     }
 }

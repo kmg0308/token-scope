@@ -248,6 +248,15 @@ final class DashboardModel: ObservableObject {
         refresh(restartInProgress: true)
     }
 
+    func rebuildCache() {
+        do {
+            try scanner.clearCache()
+            refresh(restartInProgress: true, fullSync: true)
+        } catch {
+            errorMessage = "Could not rebuild the token cache: \(error.localizedDescription)"
+        }
+    }
+
     var filteredEvents: [TokenEvent] {
         Aggregation.filter(
             events: scanResult.events,

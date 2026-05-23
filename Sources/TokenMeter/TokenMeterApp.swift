@@ -22,6 +22,10 @@ struct TokenMeterApp: App {
                     model.refresh(restartInProgress: true)
                 }
                 .keyboardShortcut("r", modifiers: [.command])
+
+                Button("Rebuild Token Cache") {
+                    model.rebuildCache()
+                }
             }
         }
     }

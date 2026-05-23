@@ -5,11 +5,18 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
     private let folder: URL
     private let localDevice: TokenDeviceMetadata
     private let fileManager: FileManager
+    private let cacheStore: TokenEventCacheStore?
 
-    public init(folder: URL, localDevice: TokenDeviceMetadata, fileManager: FileManager = .default) {
+    public init(
+        folder: URL,
+        localDevice: TokenDeviceMetadata,
+        fileManager: FileManager = .default,
+        cacheStore: TokenEventCacheStore? = nil
+    ) {
         self.folder = folder
         self.localDevice = localDevice
         self.fileManager = fileManager
+        self.cacheStore = cacheStore
     }
 
     public func synchronize(
@@ -73,14 +80,23 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         if replaceExisting {
             records = sortedRecords(Array(recordsByKey.values))
             try write(records: records, to: localLedgerURL)
+            cacheLedger(records: records, at: localLedgerURL)
             return records.count
         }
 
-        let existingKeys = readIdentityKeys(from: localLedgerURL, isCancelled: isCancelled)
+        guard !recordsByKey.isEmpty else { return 0 }
+
+        let beforeAppendSnapshot = syncLedgerSnapshot(for: localLedgerURL)
+        let cachedBeforeAppendEvents = cachedLedgerEvents(for: beforeAppendSnapshot)
+        let existingKeys = cachedLedgerKeys(for: beforeAppendSnapshot)
+            ?? readIdentityKeys(from: localLedgerURL, isCancelled: isCancelled)
         records = sortedRecords(recordsByKey.values.filter { !existingKeys.contains($0.identityKey) })
         guard !records.isEmpty else { return 0 }
 
         try append(records: records, to: localLedgerURL)
+        if let cachedBeforeAppendEvents {
+            cacheLedger(events: cachedBeforeAppendEvents + records.map(\.tokenEvent), at: localLedgerURL)
+        }
         return records.count
     }
 
@@ -143,6 +159,7 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
     ) -> (events: [TokenEvent], deviceFileCount: Int, parseErrorCount: Int) {
         let devicesURL = folder.appendingPathComponent("devices", isDirectory: true)
         guard fileManager.fileExists(atPath: devicesURL.path) else {
+            try? cacheStore?.removeMissingOrigins(originKind: .syncLedger, keeping: [])
             return ([], 0, 0)
         }
 
@@ -157,15 +174,75 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         var events: [TokenEvent] = []
         var fileCount = 0
         var parseErrors = 0
+        var ledgerPaths = Set<String>()
 
         for case let url as URL in enumerator where !isCancelled() && url.pathExtension == "jsonl" {
             fileCount += 1
-            let result = readRecords(from: url, importedAfter: importedAfter, isCancelled: isCancelled)
+            ledgerPaths.insert(syncLedgerSnapshot(for: url)?.path ?? url.resolvingSymlinksInPath().path)
+            let result = cachedOrReadLedgerEvents(from: url, importedAfter: importedAfter, isCancelled: isCancelled)
             parseErrors += result.parseErrorCount
-            events.append(contentsOf: result.records.map(\.tokenEvent))
+            events.append(contentsOf: result.events)
         }
 
+        try? cacheStore?.removeMissingOrigins(originKind: .syncLedger, keeping: ledgerPaths)
         return (events, fileCount, parseErrors)
+    }
+
+    private func cachedOrReadLedgerEvents(
+        from url: URL,
+        importedAfter: Date?,
+        isCancelled: () -> Bool
+    ) -> (events: [TokenEvent], parseErrorCount: Int) {
+        let snapshot = syncLedgerSnapshot(for: url)
+        if let cachedEvents = cachedLedgerEvents(for: snapshot) {
+            return (filter(events: cachedEvents, importedAfter: importedAfter), 0)
+        }
+
+        let result = readRecords(from: url, isCancelled: isCancelled)
+        let events = result.records.map(\.tokenEvent)
+        if result.parseErrorCount == 0 {
+            cacheLedger(events: events, at: url)
+        }
+        return (filter(events: events, importedAfter: importedAfter), result.parseErrorCount)
+    }
+
+    private func filter(events: [TokenEvent], importedAfter: Date?) -> [TokenEvent] {
+        guard let importedAfter else { return events }
+        return events.filter { $0.timestamp >= importedAfter }
+    }
+
+    private func cachedLedgerEvents(for snapshot: TokenEventCacheStore.FileSnapshot?) -> [TokenEvent]? {
+        guard let snapshot,
+              let cached = try? cacheStore?.cachedEvents(for: snapshot, originKind: .syncLedger) else {
+            return nil
+        }
+        if case .events(let events) = cached {
+            return events
+        }
+        return nil
+    }
+
+    private func cachedLedgerKeys(for snapshot: TokenEventCacheStore.FileSnapshot?) -> Set<String>? {
+        guard let snapshot else { return nil }
+        return try? cacheStore?.cachedEventKeys(for: snapshot, originKind: .syncLedger)
+    }
+
+    private func cacheLedger(records: [SyncLedgerRecord], at url: URL) {
+        cacheLedger(events: records.map(\.tokenEvent), at: url)
+    }
+
+    private func cacheLedger(events: [TokenEvent], at url: URL) {
+        guard let snapshot = syncLedgerSnapshot(for: url) else { return }
+        try? cacheStore?.replaceEvents(events, for: snapshot, originKind: .syncLedger)
+    }
+
+    private func syncLedgerSnapshot(for url: URL) -> TokenEventCacheStore.FileSnapshot? {
+        TokenEventCacheStore.FileSnapshot.make(
+            for: url,
+            source: nil,
+            deviceId: nil,
+            fileManager: fileManager
+        )
     }
 
     private func readIdentityKeys(from url: URL, isCancelled: () -> Bool) -> Set<String> {
@@ -186,7 +263,6 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
 
     private func readRecords(
         from url: URL,
-        importedAfter: Date?,
         isCancelled: () -> Bool
     ) -> (records: [SyncLedgerRecord], parseErrorCount: Int) {
         guard let content = try? String(contentsOf: url, encoding: .utf8) else {
@@ -204,10 +280,6 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             }
 
             do {
-                if let importedAfter {
-                    let header = try decoder.decode(SyncLedgerRecordHeader.self, from: data)
-                    guard header.timestamp >= importedAfter else { continue }
-                }
                 let record = try decoder.decode(SyncLedgerRecord.self, from: data)
                 records.append(record)
             } catch {
@@ -279,10 +351,6 @@ private struct SyncLedgerIdentity: Decodable {
         case deviceId = "device_id"
         case eventId = "event_id"
     }
-}
-
-private struct SyncLedgerRecordHeader: Decodable {
-    var timestamp: Date
 }
 
 private struct SyncLedgerRecord: Codable, Hashable {

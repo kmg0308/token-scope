@@ -12,9 +12,11 @@ enum TokenMeterSelfTest {
         try dashboardRangesExposeShortOptions()
         try dashboardBucketOptionsStayReadable()
         try scannerIncludesAllRecentClaudeFiles()
+        try scannerReusesCachedLocalFilesUntilTheyChange()
         try syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents()
         try syncFolderAppendsOnlyNewLocalEvents()
         try syncFolderImportsOnlyRequestedWindow()
+        try syncFolderReusesCachedDeviceLedgers()
         if CommandLine.arguments.contains("--real-scan") {
             runRealScanSmokeTest()
         }
@@ -194,6 +196,47 @@ enum TokenMeterSelfTest {
         try expect(claudeStatus?.scannedFileCount == 45, "scanner reports Claude scanned files")
     }
 
+    private static func scannerReusesCachedLocalFilesUntilTheyChange() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cache = try temporaryCache(in: directory)
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let scanner = TokenLogScanner(homeDirectory: home, localDevice: device, cacheStore: cache)
+        let logURL = try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "cached.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-a",
+            input: 10
+        )
+        let cachedDate = isoDate("2026-01-01T00:10:00.000Z")
+        try setModificationDate(cachedDate, for: logURL)
+
+        let first = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: first.events).total == 10, "initial cached scan total")
+
+        try overwriteWithInvalidContentPreservingSizeAndDate(url: logURL, date: cachedDate)
+        let unchanged = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: unchanged.events).total == 10, "unchanged file uses cached events")
+        try expect(unchanged.parseErrorCount == 0, "unchanged cached file avoids reparse errors")
+
+        _ = try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "cached.jsonl",
+            timestamp: "2026-01-01T00:01:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-b",
+            input: 25
+        )
+        try setModificationDate(isoDate("2026-01-01T00:20:00.000Z"), for: logURL)
+        let changed = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: changed.events).total == 25, "changed file is reparsed")
+    }
+
     private static func syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -238,6 +281,14 @@ enum TokenMeterSelfTest {
         let mergedA = scannerA.scan(syncFolder: syncFolder)
         try expect(Aggregation.totalUsage(events: mergedA.events).total == 30, "local and sync ledgers dedupe")
         try expect(Set(mergedA.events.map(\.deviceId)) == ["mac-a", "mac-b"], "merged events keep device ids")
+        try expect(
+            mergedA.events.first { $0.deviceId == "mac-a" }?.projectPath == "/tmp/secret-project-a",
+            "local events keep full project details"
+        )
+        try expect(
+            mergedA.events.first { $0.deviceId == "mac-b" }?.projectPath.hasPrefix("Project ") == true,
+            "remote sync events keep hashed project display"
+        )
 
         let ledgerText = try syncLedgerText(syncFolder: syncFolder)
         try expect(!ledgerText.contains("secret-project"), "sync ledger omits raw project paths")
@@ -329,6 +380,44 @@ enum TokenMeterSelfTest {
         try expect(windowed.status.importedEventCount == 1, "sync import status counts windowed records")
     }
 
+    private static func syncFolderReusesCachedDeviceLedgers() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let cache = try temporaryCache(in: directory)
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let store = TokenSyncLedgerStore(folder: syncFolder, localDevice: device, cacheStore: cache)
+        let event = TokenEvent(
+            id: "event-a",
+            source: .claude,
+            timestamp: isoDate("2026-01-01T00:00:00.000Z"),
+            deviceId: device.id,
+            deviceName: device.name,
+            projectPath: "/tmp/project-a",
+            sessionId: "session-a",
+            model: "claude-opus",
+            usage: TokenUsage(total: 10),
+            rawFilePath: "/tmp/a.jsonl"
+        )
+
+        _ = store.synchronize(localEvents: [event], replaceLocalLedger: true)
+        let ledgerURL = syncFolder
+            .appendingPathComponent("devices", isDirectory: true)
+            .appendingPathComponent("\(device.id).jsonl")
+        let cachedDate = isoDate("2026-01-01T00:10:00.000Z")
+        try setModificationDate(cachedDate, for: ledgerURL)
+
+        let cached = store.synchronize(localEvents: [])
+        try expect(cached.events.map(\.id) == ["event-a"], "sync ledger caches valid records")
+
+        try overwriteWithInvalidContentPreservingSizeAndDate(url: ledgerURL, date: cachedDate)
+        let unchanged = store.synchronize(localEvents: [])
+        try expect(unchanged.events.map(\.id) == ["event-a"], "unchanged sync ledger uses cached records")
+        try expect(unchanged.status.parseErrorCount == 0, "unchanged sync ledger avoids parse errors")
+    }
+
     private static func temporaryFile(_ content: String) -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -338,6 +427,7 @@ enum TokenMeterSelfTest {
         return url
     }
 
+    @discardableResult
     private static func writeClaudeLog(
         homeDirectory: URL,
         fileName: String,
@@ -346,7 +436,7 @@ enum TokenMeterSelfTest {
         sessionId: String,
         requestId: String,
         input: Int
-    ) throws {
+    ) throws -> URL {
         let projectDirectory = homeDirectory
             .appendingPathComponent(".claude", isDirectory: true)
             .appendingPathComponent("projects", isDirectory: true)
@@ -355,7 +445,26 @@ enum TokenMeterSelfTest {
         let content = """
         {"timestamp":"\(timestamp)","sessionId":"\(sessionId)","requestId":"\(requestId)","uuid":"\(requestId)-uuid","cwd":"\(cwd)","type":"assistant","message":{"model":"claude-opus","usage":{"input_tokens":\(input),"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}
         """
-        try content.write(to: projectDirectory.appendingPathComponent(fileName), atomically: true, encoding: .utf8)
+        let url = projectDirectory.appendingPathComponent(fileName)
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private static func temporaryCache(in directory: URL) throws -> TokenEventCacheStore {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return try TokenEventCacheStore(databaseURL: directory.appendingPathComponent("cache.sqlite"))
+    }
+
+    private static func setModificationDate(_ date: Date, for url: URL) throws {
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+    }
+
+    private static func overwriteWithInvalidContentPreservingSizeAndDate(url: URL, date: Date) throws {
+        let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber
+        let byteCount = size?.intValue ?? 0
+        let invalid = String(repeating: "x", count: byteCount)
+        try invalid.write(to: url, atomically: true, encoding: .utf8)
+        try setModificationDate(date, for: url)
     }
 
     private static func syncLedgerText(syncFolder: URL) throws -> String {

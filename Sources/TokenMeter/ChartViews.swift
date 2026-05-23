@@ -41,7 +41,7 @@ struct TokenBarChart: View {
             chartLegend
         }
         .padding(16)
-        .tokenSurface()
+        .tokenSurface(elevated: true)
     }
 
     private func plotArea(buckets: [TimeBucket], maxValue: Int, sparseTimeline: Bool) -> some View {
@@ -168,13 +168,13 @@ struct TokenBarChart: View {
 
     private var gridLine: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.075))
+            .fill(Color.white.opacity(0.055))
             .frame(height: 1)
     }
 
     private func yAxis(maxValue: Int) -> some View {
         VStack(alignment: .trailing) {
-                let ticks = yAxisTickValues(maxValue: maxValue)
+            let ticks = yAxisTickValues(maxValue: maxValue)
             ForEach(ticks.indices, id: \.self) { index in
                 Text(TokenFormatters.tokens(ticks[index], format: numberFormat))
                     .lineLimit(1)
@@ -482,8 +482,7 @@ struct TokenBarChart: View {
         .padding(.horizontal, 8)
         .frame(height: 24)
         .background {
-            Capsule(style: .continuous)
-                .fill(TokenMeterTheme.control)
+            TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
         }
     }
 
@@ -656,13 +655,7 @@ struct ChartTooltip: View {
         }
         .padding(10)
         .frame(width: numberFormat == .full ? 238 : 178, alignment: .leading)
-        .background(TokenMeterTheme.elevatedSurface)
-        .overlay {
-            RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous)
-                .stroke(TokenMeterTheme.border, lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous))
-        .shadow(color: Color.black.opacity(0.34), radius: 14, x: 0, y: 8)
+        .tokenSurface(elevated: true, radius: TokenMeterTheme.controlRadius)
     }
 }
 
@@ -675,7 +668,7 @@ struct ProportionBar: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Rectangle()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(TokenMeterTheme.control)
                 Rectangle()
                     .fill(color)
                     .frame(width: proxy.size.width * CGFloat(value) / CGFloat(max(1, maxValue)))

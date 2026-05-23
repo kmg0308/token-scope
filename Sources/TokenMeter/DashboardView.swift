@@ -15,9 +15,9 @@ struct DashboardView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Rectangle()
-                .fill(TokenMeterTheme.subtleBorder)
-                .frame(height: 1)
+                .padding(.horizontal, 18)
+                .padding(.top, 14)
+                .padding(.bottom, 8)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if updates.updateLabel != nil {
@@ -51,17 +51,15 @@ struct DashboardView: View {
                     dataFooter
                 }
                 .padding(.horizontal, 24)
-                .padding(.vertical, 22)
+                .padding(.top, 8)
+                .padding(.bottom, 22)
             }
+            .tokenScrollEdgeGlass()
         }
         .foregroundStyle(TokenMeterTheme.primaryText)
         .background {
-            LinearGradient(
-                colors: [TokenMeterTheme.backgroundTop, TokenMeterTheme.background],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            TokenLiquidBackdrop()
+                .ignoresSafeArea()
         }
         .sheet(isPresented: $updates.isSheetPresented) {
             UpdateSheetView()
@@ -88,17 +86,12 @@ struct DashboardView: View {
         HStack(spacing: 16) {
             HStack(spacing: 11) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(TokenMeterTheme.elevatedSurface)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(TokenMeterTheme.border, lineWidth: 1)
-                        }
+                    TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
                     Image(systemName: "chart.bar.xaxis")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(TokenMeterTheme.accent)
                 }
-                .frame(width: 34, height: 34)
+                .frame(width: 32, height: 32)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("TokenMeter")
@@ -113,7 +106,7 @@ struct DashboardView: View {
             Spacer()
 
             SectionSelector(selection: $model.selectedSection)
-                .frame(width: 372)
+                .frame(width: 360)
 
             Button {
                 model.refresh(restartInProgress: true)
@@ -137,8 +130,9 @@ struct DashboardView: View {
             }
             .buttonStyle(TokenPillButtonStyle(prominent: updates.updateLabel != nil))
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 15)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .tokenSurface(elevated: true, radius: 18)
     }
 
     private var headerSubtitle: String {
@@ -173,8 +167,7 @@ struct DashboardView: View {
                 .padding(.horizontal, 10)
                 .frame(height: 28)
                 .background {
-                    Capsule(style: .continuous)
-                        .fill(TokenMeterTheme.control)
+                    TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
                 }
 
                 if model.isSyncConfigured {
@@ -307,8 +300,7 @@ struct DashboardView: View {
         .padding(.horizontal, 9)
         .frame(height: 28)
         .background {
-            Capsule(style: .continuous)
-                .fill(TokenMeterTheme.control)
+            TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
         }
     }
 
@@ -470,9 +462,10 @@ struct DashboardView: View {
                     }
                 }
             } label: {
-                TokenFilterMenuLabel(title: "Project", value: shortProject(model.projectFilter), width: 290)
+                TokenFilterMenuLabel(title: "Project", value: shortProject(model.projectFilter), width: 330)
             }
             .menuStyle(.borderlessButton)
+            .fixedSize()
 
             Menu {
                 ForEach(model.modelOptions, id: \.self) { modelName in
@@ -482,9 +475,10 @@ struct DashboardView: View {
                     }
                 }
             } label: {
-                TokenFilterMenuLabel(title: "Model", value: model.modelFilter, width: 290)
+                TokenFilterMenuLabel(title: "Model", value: model.modelFilter, width: 330)
             }
             .menuStyle(.borderlessButton)
+            .fixedSize()
 
             Spacer()
         }
@@ -698,28 +692,28 @@ struct SectionSelector: View {
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 30)
-                        .contentShape(Capsule(style: .continuous))
+                        .frame(height: 28)
+                        .contentShape(RoundedRectangle(cornerRadius: TokenMeterTheme.compactControlRadius, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
-                .foregroundStyle(selection == section ? Color.black.opacity(0.88) : TokenMeterTheme.secondaryText)
+                .foregroundStyle(selection == section ? TokenMeterTheme.primaryText : TokenMeterTheme.secondaryText)
                 .background {
-                    Capsule(style: .continuous)
-                        .fill(selection == section ? TokenMeterTheme.primaryText : Color.clear)
+                    if selection == section {
+                        TokenControlChrome(
+                            isActive: true,
+                            cornerRadius: TokenMeterTheme.compactControlRadius,
+                            glassTint: TokenMeterTheme.accent.opacity(0.35)
+                        )
+                    }
                 }
-                .contentShape(Capsule(style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: TokenMeterTheme.compactControlRadius, style: .continuous))
             }
         }
         .padding(3)
         .frame(height: TokenMeterTheme.buttonHeight)
         .background {
-            Capsule(style: .continuous)
-                .fill(TokenMeterTheme.control)
-        }
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(TokenMeterTheme.border, lineWidth: 1)
+            TokenControlChrome()
         }
     }
 }
@@ -956,8 +950,7 @@ struct SyncFolderPanel: View {
         .padding(.horizontal, 8)
         .frame(height: 24)
         .background {
-            Capsule(style: .continuous)
-                .fill(TokenMeterTheme.control)
+            TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
         }
     }
 }
@@ -1039,8 +1032,7 @@ struct DataSourceStatusRow: View {
         .padding(.horizontal, 8)
         .frame(height: 24)
         .background {
-            Capsule(style: .continuous)
-                .fill(TokenMeterTheme.control)
+            TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
         }
     }
 }
@@ -1075,13 +1067,10 @@ struct CollapsibleSection<Content: View>: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                .background(TokenMeterTheme.surface)
-                .overlay {
-                    RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous)
-                        .stroke(TokenMeterTheme.subtleBorder, lineWidth: 1)
+                .background {
+                    TokenControlChrome(cornerRadius: TokenMeterTheme.cardRadius)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous))
-                .contentShape(Rectangle())
+                .contentShape(RoundedRectangle(cornerRadius: TokenMeterTheme.cardRadius, style: .continuous))
             }
             .buttonStyle(.plain)
 

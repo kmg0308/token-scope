@@ -21,7 +21,7 @@ struct UpdateSheetView: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(TokenIconButtonStyle())
+                .buttonStyle(TokenCompactIconButtonStyle())
                 .help("Close")
             }
 
@@ -67,9 +67,11 @@ struct UpdateSheetView: View {
             }
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: 452)
         .foregroundStyle(TokenMeterTheme.primaryText)
-        .background(TokenMeterTheme.background)
+        .background {
+            TokenLiquidBackdrop()
+        }
         .onAppear {
             updates.checkIfConfigured(silent: true)
         }

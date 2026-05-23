@@ -8,6 +8,7 @@ public enum TokenLogParser {
         var model = "Unknown"
         var previousTotal: TokenUsage?
         let sessionId = sessionIdFromFileName(url.lastPathComponent)
+        let dateParser = DateParser()
 
         try forEachJSONLine(in: url, isCancelled: isCancelled) { index, object in
             guard let payload = object["payload"] as? [String: Any] else { return }
@@ -19,8 +20,8 @@ public enum TokenLogParser {
                 model = payloadModel
             }
 
-            let timestamp = parseDate(object["timestamp"] as? String)
-                ?? parseDate(payload["timestamp"] as? String)
+            let timestamp = dateParser.parse(object["timestamp"] as? String)
+                ?? dateParser.parse(payload["timestamp"] as? String)
                 ?? Date(timeIntervalSince1970: 0)
 
             let totalDict = nestedDict(payload, ["info", "total_token_usage"])
@@ -64,6 +65,7 @@ public enum TokenLogParser {
     public static func parseClaudeFile(at url: URL, isCancelled: () -> Bool = { false }) throws -> [TokenEvent] {
         var events: [TokenEvent] = []
         var seenRequests = Set<String>()
+        let dateParser = DateParser()
 
         try forEachJSONLine(in: url, isCancelled: isCancelled) { index, object in
             guard let message = object["message"] as? [String: Any],
@@ -75,7 +77,7 @@ public enum TokenLogParser {
             if seenRequests.contains(dedupeKey) { return }
             seenRequests.insert(dedupeKey)
 
-            let timestamp = parseDate(object["timestamp"] as? String) ?? Date(timeIntervalSince1970: 0)
+            let timestamp = dateParser.parse(object["timestamp"] as? String) ?? Date(timeIntervalSince1970: 0)
             let model = (message["model"] as? String) ?? "Unknown"
             let projectPath = (object["cwd"] as? String) ?? "Unknown"
             let sessionId = (object["sessionId"] as? String) ?? sessionIdFromFileName(url.lastPathComponent)
@@ -187,15 +189,21 @@ public enum TokenLogParser {
         return 0
     }
 
-    private static func parseDate(_ string: String?) -> Date? {
-        guard let string else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: string) {
-            return date
+    private final class DateParser {
+        private let fractionalFormatter: ISO8601DateFormatter
+        private let plainFormatter: ISO8601DateFormatter
+
+        init() {
+            fractionalFormatter = ISO8601DateFormatter()
+            fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            plainFormatter = ISO8601DateFormatter()
+            plainFormatter.formatOptions = [.withInternetDateTime]
         }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: string)
+
+        func parse(_ string: String?) -> Date? {
+            guard let string else { return nil }
+            return fractionalFormatter.date(from: string) ?? plainFormatter.date(from: string)
+        }
     }
 
     private static func sessionIdFromFileName(_ fileName: String) -> String {

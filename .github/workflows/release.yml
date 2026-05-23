@@ -11,10 +11,16 @@ permissions:
 
 jobs:
   build-release:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
 
       - name: Build app, ZIP, and PKG
         run: |

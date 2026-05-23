@@ -18,8 +18,8 @@ struct DashboardView: View {
                 .padding(.horizontal, 18)
                 .padding(.top, 14)
                 .padding(.bottom, 8)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+            TokenSmoothScrollView {
+                VStack(alignment: .leading, spacing: 18) {
                     if updates.updateLabel != nil {
                         UpdateAvailableBanner()
                     }
@@ -53,6 +53,9 @@ struct DashboardView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
                 .padding(.bottom, 22)
+            }
+            .transaction { transaction in
+                transaction.disablesAnimations = true
             }
         }
         .foregroundStyle(TokenMeterTheme.primaryText)
@@ -111,7 +114,7 @@ struct DashboardView: View {
                 model.refresh(restartInProgress: true)
             } label: {
                 if model.isScanning {
-                    ProgressView().scaleEffect(0.58)
+                    Image(systemName: "arrow.triangle.2.circlepath")
                 } else {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -131,7 +134,7 @@ struct DashboardView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .tokenSurface(elevated: true, radius: 18, glass: true)
+        .tokenSurface(elevated: true, radius: 18)
     }
 
     private var headerSubtitle: String {
@@ -185,8 +188,7 @@ struct DashboardView: View {
 
                 if model.isScanning {
                     HStack(spacing: 7) {
-                        ProgressView()
-                            .scaleEffect(0.58)
+                        Image(systemName: "arrow.triangle.2.circlepath")
                         Text("Scanning")
                     }
                     .font(.system(size: 12, weight: .semibold))
@@ -701,8 +703,7 @@ struct SectionSelector: View {
                     if selection == section {
                         TokenControlChrome(
                             isActive: true,
-                            cornerRadius: TokenMeterTheme.compactControlRadius,
-                            glassTint: TokenMeterTheme.accent.opacity(0.35)
+                            cornerRadius: TokenMeterTheme.compactControlRadius
                         )
                     }
                 }
@@ -1039,12 +1040,12 @@ struct DataSourceStatusRow: View {
 struct CollapsibleSection<Content: View>: View {
     let title: String
     @Binding var isExpanded: Bool
-    let content: Content
+    private let content: () -> Content
 
-    init(_ title: String, isExpanded: Binding<Bool>, @ViewBuilder content: () -> Content) {
+    init(_ title: String, isExpanded: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self._isExpanded = isExpanded
-        self.content = content()
+        self.content = content
     }
 
     var body: some View {
@@ -1074,7 +1075,7 @@ struct CollapsibleSection<Content: View>: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                content
+                content()
                     .padding(.horizontal, 1)
             }
         }
@@ -1102,7 +1103,6 @@ struct ComponentBreakdown: View {
             }
             .frame(maxWidth: 420, alignment: .leading)
             .frame(height: 10)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
 
             HStack(spacing: 16) {
                 ForEach(components, id: \.kind) { component in

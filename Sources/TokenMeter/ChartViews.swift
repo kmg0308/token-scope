@@ -1,7 +1,7 @@
 import SwiftUI
 import TokenMeterCore
 
-enum ChartMode {
+enum ChartMode: Equatable {
     case bySource
     case byTokenKind(TokenSource)
 }
@@ -12,7 +12,6 @@ struct TokenBarChart: View {
     let bucketInterval: BucketInterval
     let mode: ChartMode
     let numberFormat: TokenNumberFormat
-    @State private var hoveredBucket: TimeBucket?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -45,56 +44,22 @@ struct TokenBarChart: View {
     }
 
     private func plotArea(buckets: [TimeBucket], maxValue: Int, sparseTimeline: Bool) -> some View {
-        GeometryReader { proxy in
-            ZStack {
-                Canvas { context, size in
-                    drawPlot(
-                        context: &context,
-                        size: size,
-                        buckets: buckets,
-                        maxValue: maxValue,
-                        sparseTimeline: sparseTimeline
-                    )
-                }
-
-                if buckets.isEmpty {
-                    Text("No data")
-                        .font(.system(size: 12))
-                        .foregroundStyle(TokenMeterTheme.secondaryText)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-
-                if let hoveredBucket {
-                    let position = tooltipPosition(
-                        for: hoveredBucket,
-                        in: proxy.size,
-                        buckets: buckets,
-                        maxValue: maxValue,
-                        sparseTimeline: sparseTimeline
-                    )
-
-                    ChartTooltip(bucket: hoveredBucket, mode: mode, numberFormat: numberFormat)
-                        .position(position)
-                        .zIndex(20)
-                        .allowsHitTesting(false)
-                }
+        ZStack {
+            Canvas(opaque: false, rendersAsynchronously: true) { context, size in
+                drawPlot(
+                    context: &context,
+                    size: size,
+                    buckets: buckets,
+                    maxValue: maxValue,
+                    sparseTimeline: sparseTimeline
+                )
             }
-            .contentShape(Rectangle())
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let point):
-                    let bucket = hoveredBucket(
-                        at: point,
-                        in: proxy.size,
-                        buckets: buckets,
-                        sparseTimeline: sparseTimeline
-                    )
-                    if hoveredBucket?.id != bucket?.id {
-                        hoveredBucket = bucket
-                    }
-                case .ended:
-                    hoveredBucket = nil
-                }
+
+            if buckets.isEmpty {
+                Text("No data")
+                    .font(.system(size: 12))
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -110,14 +75,6 @@ struct TokenBarChart: View {
 
         guard !buckets.isEmpty else { return }
 
-        if let hoveredBucket,
-           let hoverFrame = hoverFrame(for: hoveredBucket, in: size, buckets: buckets, sparseTimeline: sparseTimeline) {
-            context.fill(
-                Path(roundedRect: hoverFrame, cornerRadius: 5),
-                with: .color(Color.white.opacity(0.055))
-            )
-        }
-
         if sparseTimeline {
             let interval = range.interval(earliest: buckets.map(\.start).min())
             let width = sparseBarWidth(plotWidth: size.width, bucketCount: buckets.count)
@@ -129,8 +86,7 @@ struct TokenBarChart: View {
                     maxValue: maxValue,
                     x: x - width / 2,
                     width: width,
-                    height: size.height,
-                    isHovered: hoveredBucket?.id == bucket.id
+                    height: size.height
                 )
             }
         } else {
@@ -144,8 +100,7 @@ struct TokenBarChart: View {
                     maxValue: maxValue,
                     x: x,
                     width: width,
-                    height: size.height,
-                    isHovered: hoveredBucket?.id == bucket.id
+                    height: size.height
                 )
             }
         }
@@ -168,108 +123,110 @@ struct TokenBarChart: View {
         maxValue: Int,
         x: CGFloat,
         width: CGFloat,
-        height: CGFloat,
-        isHovered: Bool
+        height: CGFloat
     ) {
         let totalHeight = max(2, height * CGFloat(bucket.usage.total) / CGFloat(maxValue))
-        let segments = chartSegments(for: bucket, mode: mode)
         var y = height - totalHeight
-        let opacity = isHovered ? 1.0 : 0.92
-        let radius = min(3, width / 2)
 
-        for segment in segments where segment.value > 0 {
-            let segmentHeight = max(1, totalHeight * CGFloat(segment.value) / CGFloat(max(1, segment.total)))
-            let rect = CGRect(x: x, y: y, width: width, height: segmentHeight)
-            context.fill(
-                Path(roundedRect: rect, cornerRadius: radius),
-                with: .color(segment.color.opacity(opacity))
+        switch mode {
+        case .bySource:
+            let codex = bucket.sourceUsage[.codex]?.total ?? 0
+            let claude = bucket.sourceUsage[.claude]?.total ?? 0
+            let total = max(1, codex + claude)
+            drawSegment(
+                context: &context,
+                value: codex,
+                total: total,
+                totalHeight: totalHeight,
+                x: x,
+                width: width,
+                y: &y,
+                color: sourceColor(.codex)
             )
-            y += segmentHeight
-        }
-    }
-
-    private func hoveredBucket(
-        at point: CGPoint,
-        in size: CGSize,
-        buckets: [TimeBucket],
-        sparseTimeline: Bool
-    ) -> TimeBucket? {
-        guard point.x >= 0, point.x <= size.width, point.y >= 0, point.y <= size.height, !buckets.isEmpty else {
-            return nil
-        }
-
-        if sparseTimeline {
-            let interval = range.interval(earliest: buckets.map(\.start).min())
-            let width = sparseBarWidth(plotWidth: size.width, bucketCount: buckets.count)
-            let nonEmptyBuckets = buckets.filter { $0.usage.total > 0 }
-            guard let nearest = nonEmptyBuckets.min(by: {
-                abs(timelineX(for: $0.start, width: size.width, interval: interval) - point.x)
-                    < abs(timelineX(for: $1.start, width: size.width, interval: interval) - point.x)
-            }) else {
-                return nil
+            drawSegment(
+                context: &context,
+                value: claude,
+                total: total,
+                totalHeight: totalHeight,
+                x: x,
+                width: width,
+                y: &y,
+                color: sourceColor(.claude)
+            )
+        case .byTokenKind(let source):
+            let input: Int
+            let cache: Int
+            switch source {
+            case .codex:
+                input = max(0, bucket.usage.input - bucket.usage.cachedInput)
+                cache = bucket.usage.cachedInput
+            case .claude:
+                input = bucket.usage.input
+                cache = bucket.usage.cacheCreation + bucket.usage.cacheRead
+            case .all:
+                input = max(0, bucket.usage.input - bucket.usage.cachedInput)
+                cache = bucket.usage.cachedInput + bucket.usage.cacheCreation + bucket.usage.cacheRead
             }
-            let distance = abs(timelineX(for: nearest.start, width: size.width, interval: interval) - point.x)
-            return distance <= max(10, width * 1.8) ? nearest : nil
+            let output = max(0, bucket.usage.output - bucket.usage.reasoning)
+            let total = max(1, input + cache + output + bucket.usage.reasoning)
+            drawSegment(
+                context: &context,
+                value: input,
+                total: total,
+                totalHeight: totalHeight,
+                x: x,
+                width: width,
+                y: &y,
+                color: componentColor(.input)
+            )
+            drawSegment(
+                context: &context,
+                value: cache,
+                total: total,
+                totalHeight: totalHeight,
+                x: x,
+                width: width,
+                y: &y,
+                color: componentColor(.cache)
+            )
+            drawSegment(
+                context: &context,
+                value: output,
+                total: total,
+                totalHeight: totalHeight,
+                x: x,
+                width: width,
+                y: &y,
+                color: componentColor(.output)
+            )
+            drawSegment(
+                context: &context,
+                value: bucket.usage.reasoning,
+                total: total,
+                totalHeight: totalHeight,
+                x: x,
+                width: width,
+                y: &y,
+                color: componentColor(.reasoning)
+            )
         }
-
-        let slotWidth = size.width / CGFloat(max(1, buckets.count))
-        let index = min(max(0, Int(point.x / max(1, slotWidth))), buckets.count - 1)
-        return buckets[index].usage.total > 0 ? buckets[index] : nil
     }
 
-    private func hoverFrame(
-        for bucket: TimeBucket,
-        in size: CGSize,
-        buckets: [TimeBucket],
-        sparseTimeline: Bool
-    ) -> CGRect? {
-        guard !buckets.isEmpty else { return nil }
-
-        if sparseTimeline {
-            let interval = range.interval(earliest: buckets.map(\.start).min())
-            let width = sparseBarWidth(plotWidth: size.width, bucketCount: buckets.count)
-            let centerX = timelineX(for: bucket.start, width: size.width, interval: interval)
-            return CGRect(x: centerX - max(10, width * 1.8) / 2, y: 0, width: max(10, width * 1.8), height: size.height)
-        }
-
-        guard let index = buckets.firstIndex(where: { $0.id == bucket.id }) else { return nil }
-        let slotWidth = size.width / CGFloat(max(1, buckets.count))
-        let width = barWidth(slotWidth: slotWidth, count: buckets.count)
-        let centerX = slotWidth * CGFloat(index) + slotWidth / 2
-        let bandWidth = min(slotWidth * 0.84, max(width + 12, width))
-        return CGRect(x: centerX - bandWidth / 2, y: 0, width: bandWidth, height: size.height)
-    }
-
-    private func tooltipPosition(
-        for bucket: TimeBucket,
-        in size: CGSize,
-        buckets: [TimeBucket],
-        maxValue: Int,
-        sparseTimeline: Bool
-    ) -> CGPoint {
-        let barHeight = max(2, size.height * CGFloat(bucket.usage.total) / CGFloat(maxValue))
-        let centerX: CGFloat
-
-        if sparseTimeline {
-            let interval = range.interval(earliest: buckets.map(\.start).min())
-            centerX = timelineX(for: bucket.start, width: size.width, interval: interval)
-        } else if let index = buckets.firstIndex(where: { $0.id == bucket.id }) {
-            let slotWidth = size.width / CGFloat(max(1, buckets.count))
-            centerX = slotWidth * CGFloat(index) + slotWidth / 2
-        } else {
-            centerX = size.width / 2
-        }
-
-        let x = min(
-            max(tooltipWidth / 2, centerX + tooltipWidth * 0.22),
-            max(tooltipWidth / 2, size.width - tooltipWidth / 2)
-        )
-        let y = min(
-            max(tooltipHeight / 2, size.height - barHeight - tooltipHeight / 2 - 10),
-            max(tooltipHeight / 2, size.height - tooltipHeight / 2)
-        )
-
-        return CGPoint(x: x, y: y)
+    private func drawSegment(
+        context: inout GraphicsContext,
+        value: Int,
+        total: Int,
+        totalHeight: CGFloat,
+        x: CGFloat,
+        width: CGFloat,
+        y: inout CGFloat,
+        color: Color
+    ) {
+        guard value > 0 else { return }
+        let segmentHeight = max(1, totalHeight * CGFloat(value) / CGFloat(max(1, total)))
+        let rect = CGRect(x: x, y: y, width: width, height: segmentHeight)
+        context.fill(Path(rect), with: .color(color))
+        y += segmentHeight
     }
 
     private func yAxis(maxValue: Int) -> some View {
@@ -320,6 +277,7 @@ struct TokenBarChart: View {
             return fallbackAxisTicks(width: width)
         }
 
+        let formatter = axisDateFormatter()
         let slotWidth = width / CGFloat(max(1, buckets.count))
         let labelSpacing = minTickSpacing
         let maxLabels = max(2, Int(width / labelSpacing))
@@ -331,7 +289,7 @@ struct TokenBarChart: View {
             let rawX = slotWidth * CGFloat(index) + slotWidth / 2
             return AxisTick(
                 id: index,
-                title: axisDate(buckets[index].start),
+                title: formatter.string(from: buckets[index].start),
                 x: clampedAxisX(rawX, width: width, labelWidth: labelWidth),
                 width: labelWidth
             )
@@ -339,6 +297,7 @@ struct TokenBarChart: View {
     }
 
     private func fallbackAxisTicks(width: CGFloat) -> [AxisTick] {
+        let formatter = axisDateFormatter()
         let interval = range.interval()
         let dates = [
             interval.start,
@@ -350,7 +309,7 @@ struct TokenBarChart: View {
             let rawX = index == 0 ? 0 : (index == 1 ? width / 2 : width)
             return AxisTick(
                 id: index,
-                title: axisDate(date),
+                title: formatter.string(from: date),
                 x: clampedAxisX(rawX, width: width, labelWidth: labelWidth),
                 width: labelWidth
             )
@@ -391,18 +350,17 @@ struct TokenBarChart: View {
     }
 
     private func visibleBuckets(sparseTimeline: Bool) -> [TimeBucket] {
-        let sorted = buckets.sorted { $0.start < $1.start }
-        guard let first = sorted.first else { return [] }
+        guard let first = buckets.first else { return [] }
 
         let interval = bucketInterval
-        guard !sparseTimeline else { return sorted }
+        guard !sparseTimeline else { return buckets }
 
         let calendar = Calendar.current
         let rangeInterval = range.interval(calendar: calendar, earliest: first.start)
         let start = bucketStart(for: rangeInterval.start, interval: interval, calendar: calendar)
         let end = bucketStart(for: rangeInterval.end, interval: interval, calendar: calendar)
 
-        let existing = Dictionary(uniqueKeysWithValues: sorted.map { ($0.start, $0) })
+        let existing = Dictionary(uniqueKeysWithValues: buckets.map { ($0.start, $0) })
         var result: [TimeBucket] = []
         var current = start
         var guardCount = 0
@@ -541,14 +499,6 @@ struct TokenBarChart: View {
         return min(3, max(0.6, slotWidth * 0.82))
     }
 
-    private var tooltipWidth: CGFloat {
-        numberFormat == .full ? 238 : 178
-    }
-
-    private var tooltipHeight: CGFloat {
-        numberFormat == .full ? 142 : 132
-    }
-
     private var chartLegend: some View {
         HStack(spacing: 14) {
             switch mode {
@@ -602,7 +552,7 @@ struct TokenBarChart: View {
         return max(1, Int(nice * magnitude))
     }
 
-    private func axisDate(_ date: Date) -> String {
+    private func axisDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
 
@@ -629,7 +579,7 @@ struct TokenBarChart: View {
             }
         }
 
-        return formatter.string(from: date)
+        return formatter
     }
 }
 
@@ -648,49 +598,6 @@ struct BarSegment {
     let color: Color
 }
 
-struct ChartTooltip: View {
-    let bucket: TimeBucket
-    let mode: ChartMode
-    let numberFormat: TokenNumberFormat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(bucket.start.formatted(date: .abbreviated, time: .shortened))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(TokenMeterTheme.secondaryText)
-
-            Text(TokenFormatters.tokens(bucket.usage.total, format: numberFormat))
-                .font(.system(size: 18, weight: .semibold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-            Text("tokens")
-                .font(.system(size: 10))
-                .foregroundStyle(TokenMeterTheme.secondaryText)
-
-            VStack(alignment: .leading, spacing: 5) {
-                ForEach(chartSegments(for: bucket, mode: mode), id: \.id) { segment in
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(segment.color)
-                            .frame(width: 7, height: 7)
-                        Text(segment.label)
-                        Spacer()
-                        Text(TokenFormatters.tokens(segment.value, format: numberFormat))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-                    }
-                }
-            }
-            .font(.system(size: 11))
-        }
-        .padding(10)
-        .frame(width: numberFormat == .full ? 238 : 178, alignment: .leading)
-        .tokenSurface(elevated: true, radius: TokenMeterTheme.controlRadius)
-    }
-}
-
 struct ProportionBar: View {
     let value: Int
     let maxValue: Int
@@ -707,7 +614,6 @@ struct ProportionBar: View {
             }
         }
         .frame(height: 8)
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
     }
 }
 

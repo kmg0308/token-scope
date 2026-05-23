@@ -1,13 +1,10 @@
+import AppKit
 import SwiftUI
 
 enum TokenMeterTheme {
     static let background = Color(red: 0.010, green: 0.012, blue: 0.016)
-    static let backgroundTop = Color(red: 0.026, green: 0.031, blue: 0.038)
-    static let backgroundInk = Color(red: 0.004, green: 0.006, blue: 0.009)
     static let surface = Color(red: 0.050, green: 0.058, blue: 0.070)
     static let elevatedSurface = Color(red: 0.066, green: 0.077, blue: 0.092)
-    static let surfaceFallback = Color(red: 0.050, green: 0.058, blue: 0.070)
-    static let elevatedSurfaceFallback = Color(red: 0.066, green: 0.077, blue: 0.092)
     static let control = Color(red: 0.074, green: 0.086, blue: 0.102)
     static let controlHover = Color(red: 0.100, green: 0.118, blue: 0.140)
     static let selectedControl = Color(red: 0.090, green: 0.145, blue: 0.170)
@@ -32,77 +29,45 @@ enum TokenMeterTheme {
     static let compactButtonHeight: CGFloat = 30
     static let iconButtonSize: CGFloat = 34
     static let compactIconButtonSize: CGFloat = 30
-
-    static let backgroundGradient = LinearGradient(
-        colors: [backgroundTop, background, backgroundInk],
-        startPoint: .top,
-        endPoint: .bottom
-    )
 }
 
 struct TokenLiquidBackdrop: View {
     var body: some View {
-        TokenMeterTheme.backgroundGradient
+        TokenMeterTheme.background
     }
 }
 
 struct TokenSurfaceModifier: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var elevated = false
     var radius = TokenMeterTheme.cardRadius
-    var glass = false
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        let fill = reduceTransparency
-            ? (elevated ? TokenMeterTheme.elevatedSurfaceFallback : TokenMeterTheme.surfaceFallback)
-            : (elevated ? TokenMeterTheme.elevatedSurface : TokenMeterTheme.surface)
+        let fill = elevated ? TokenMeterTheme.elevatedSurface : TokenMeterTheme.surface
 
         let base = content
             .background {
-                ZStack {
-                    if glass, !reduceTransparency {
-                        shape.fill(.thinMaterial)
-                    }
-                    shape.fill(fill)
-                }
+                shape.fill(fill)
             }
             .overlay {
                 shape.stroke(elevated ? TokenMeterTheme.border : TokenMeterTheme.subtleBorder, lineWidth: 1)
             }
-            .overlay {
-                shape.stroke(Color.white.opacity(elevated ? 0.055 : 0.035), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: Color.black.opacity(elevated ? (glass ? 0.30 : 0.18) : 0.08), radius: elevated ? (glass ? 16 : 7) : 3, x: 0, y: elevated ? (glass ? 9 : 4) : 1)
-            .clipShape(shape)
 
-        #if compiler(>=6.3)
-        if #available(macOS 26.0, *), glass, elevated, !reduceTransparency {
-            base.glassEffect(.regular.tint(Color.white.opacity(0.025)), in: shape)
-        } else {
-            base
-        }
-        #else
         base
-        #endif
     }
 }
 
 extension View {
-    func tokenSurface(elevated: Bool = false, radius: CGFloat = TokenMeterTheme.cardRadius, glass: Bool = false) -> some View {
-        modifier(TokenSurfaceModifier(elevated: elevated, radius: radius, glass: glass))
+    func tokenSurface(elevated: Bool = false, radius: CGFloat = TokenMeterTheme.cardRadius) -> some View {
+        modifier(TokenSurfaceModifier(elevated: elevated, radius: radius))
     }
 }
 
 struct TokenControlChrome: View {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var isActive = false
     var isPressed = false
     var isProminent = false
     var cornerRadius = TokenMeterTheme.controlRadius
-    var glassTint: Color?
-    var usesGlassEffect = false
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -111,26 +76,9 @@ struct TokenControlChrome: View {
         let chrome = ZStack {
             shape.fill(fill)
             shape.stroke(strokeColor, lineWidth: 1)
-            shape.stroke(Color.white.opacity(isProminent ? 0.08 : 0.04), lineWidth: 1)
         }
 
-        let shadowColor = isProminent ? TokenMeterTheme.accent.opacity(0.22) : Color.black.opacity(0.16)
-
-        #if compiler(>=6.3)
-        if #available(macOS 26.0, *), !reduceTransparency, usesGlassEffect {
-            ZStack {
-                chrome
-            }
-            .glassEffect(.regular.tint(glassTint ?? (isProminent ? TokenMeterTheme.accent : nil)).interactive(), in: shape)
-            .shadow(color: shadowColor, radius: isProminent ? 10 : 6, x: 0, y: isProminent ? 4 : 2)
-        } else {
-            chrome
-                .shadow(color: shadowColor, radius: isProminent ? 8 : 3, x: 0, y: isProminent ? 3 : 1)
-        }
-        #else
         chrome
-            .shadow(color: shadowColor, radius: isProminent ? 8 : 3, x: 0, y: isProminent ? 3 : 1)
-        #endif
     }
 
     private var fillColor: Color {
@@ -151,6 +99,98 @@ struct TokenControlChrome: View {
             return TokenMeterTheme.accent.opacity(0.24)
         }
         return isPressed ? TokenMeterTheme.highlightBorder : TokenMeterTheme.subtleBorder
+    }
+}
+
+struct TokenSmoothScrollView<Content: View>: NSViewRepresentable {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    func makeNSView(context: Context) -> TokenHostingScrollView<Content> {
+        TokenHostingScrollView(rootView: content)
+    }
+
+    func updateNSView(_ scrollView: TokenHostingScrollView<Content>, context: Context) {
+        scrollView.rootView = content
+    }
+}
+
+final class TokenHostingScrollView<Content: View>: NSScrollView {
+    private let hostingView: NSHostingView<Content>
+    private var lastLaidOutWidth: CGFloat = 0
+    private var cachedFittingHeight: CGFloat = 1
+    private var needsFittingHeightUpdate = true
+
+    var rootView: Content {
+        get { hostingView.rootView }
+        set {
+            hostingView.rootView = newValue
+            hostingView.invalidateIntrinsicContentSize()
+            needsFittingHeightUpdate = true
+            needsLayout = true
+        }
+    }
+
+    init(rootView: Content) {
+        self.hostingView = NSHostingView(rootView: rootView)
+        super.init(frame: .zero)
+
+        drawsBackground = false
+        borderType = .noBorder
+        hasVerticalScroller = true
+        hasHorizontalScroller = false
+        autohidesScrollers = true
+        scrollsDynamically = true
+        usesPredominantAxisScrolling = true
+        verticalScrollElasticity = .allowed
+        horizontalScrollElasticity = .none
+        wantsLayer = true
+        layer?.drawsAsynchronously = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        contentView.drawsBackground = false
+        contentView.wantsLayer = true
+        contentView.layer?.drawsAsynchronously = true
+        contentView.layerContentsRedrawPolicy = .onSetNeedsDisplay
+
+        hostingView.isFlipped = true
+        hostingView.wantsLayer = true
+        hostingView.layer?.drawsAsynchronously = true
+        hostingView.layerContentsRedrawPolicy = .onSetNeedsDisplay
+        hostingView.translatesAutoresizingMaskIntoConstraints = true
+        documentView = hostingView
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        layoutHostingView()
+    }
+
+    private func layoutHostingView() {
+        let width = max(1, contentView.bounds.width)
+        if abs(width - lastLaidOutWidth) > 0.5 {
+            hostingView.setFrameSize(NSSize(width: width, height: max(1, hostingView.frame.height)))
+            lastLaidOutWidth = width
+            needsFittingHeightUpdate = true
+        }
+
+        if needsFittingHeightUpdate {
+            cachedFittingHeight = max(1, hostingView.fittingSize.height)
+            needsFittingHeightUpdate = false
+        }
+
+        let fittingHeight = max(contentView.bounds.height, cachedFittingHeight)
+        let newFrame = NSRect(x: 0, y: 0, width: width, height: fittingHeight)
+        if hostingView.frame.integral != newFrame.integral {
+            hostingView.frame = newFrame
+        }
     }
 }
 

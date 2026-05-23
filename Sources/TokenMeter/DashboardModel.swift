@@ -22,6 +22,17 @@ private struct BucketCacheKey: Hashable {
     var bucket: BucketInterval
 }
 
+private enum GroupedRowsKind: Hashable {
+    case project
+    case model
+    case session
+}
+
+private struct GroupedRowsCacheKey: Hashable {
+    var filter: EventFilterKey
+    var kind: GroupedRowsKind
+}
+
 enum DashboardSection: String, CaseIterable, Identifiable {
     case all = "All"
     case codex = "Codex"
@@ -123,6 +134,8 @@ final class DashboardModel: ObservableObject {
     private var bucketCache: [BucketCacheKey: [TimeBucket]] = [:]
     private var sessionCountCache: [EventFilterKey: Int] = [:]
     private var deviceCountCache: [EventFilterKey: Int] = [:]
+    private var groupedRowsCache: [GroupedRowsCacheKey: [GroupedUsageRow]] = [:]
+    private var deviceOptionsCache: (revision: Int, syncFolderPath: String?, options: [DashboardDeviceOption])?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -181,7 +194,7 @@ final class DashboardModel: ObservableObject {
         let syncFolderURL = syncFolderURL
 
         scanTask = Task { @MainActor [weak self] in
-            let worker = Task.detached(priority: .userInitiated) {
+            let worker = Task.detached(priority: .utility) {
                 scanner.scan(
                     modifiedAfter: fileModifiedAfter,
                     eventAfter: eventAfter,
@@ -253,13 +266,22 @@ final class DashboardModel: ObservableObject {
     }
 
     var deviceOptions: [DashboardDeviceOption] {
-        guard isSyncConfigured else {
-            return [
-                DashboardDeviceOption(id: localDevice.id, title: "This Mac", deviceId: localDevice.id)
-            ]
+        if let cached = deviceOptionsCache,
+           cached.revision == eventRevision,
+           cached.syncFolderPath == syncFolderPath {
+            return cached.options
         }
 
-        var options = [
+        let options: [DashboardDeviceOption]
+        guard isSyncConfigured else {
+            options = [
+                DashboardDeviceOption(id: localDevice.id, title: "This Mac", deviceId: localDevice.id)
+            ]
+            deviceOptionsCache = (eventRevision, syncFolderPath, options)
+            return options
+        }
+
+        var configuredOptions = [
             DashboardDeviceOption(id: Self.allDevicesFilterId, title: "All Devices", deviceId: nil),
             DashboardDeviceOption(id: localDevice.id, title: "This Mac", deviceId: localDevice.id)
         ]
@@ -270,7 +292,9 @@ final class DashboardModel: ObservableObject {
                 return DashboardDeviceOption(id: deviceId, title: name, deviceId: deviceId)
             }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        options.append(contentsOf: remoteDevices)
+        configuredOptions.append(contentsOf: remoteDevices)
+        options = configuredOptions
+        deviceOptionsCache = (eventRevision, syncFolderPath, options)
         return options
     }
 
@@ -420,15 +444,42 @@ final class DashboardModel: ObservableObject {
     }
 
     var projectRows: [GroupedUsageRow] {
-        Array(Aggregation.grouped(events: filteredEvents, by: \.projectPath).prefix(12))
+        let key = GroupedRowsCacheKey(
+            filter: eventFilterKey(source: selectedSection.sourceFilter, project: projectFilter, model: modelFilter),
+            kind: .project
+        )
+        if let cached = groupedRowsCache[key] {
+            return cached
+        }
+        let rows = Array(Aggregation.grouped(events: filteredEvents, by: \.projectPath).prefix(12))
+        groupedRowsCache[key] = rows
+        return rows
     }
 
     var modelRows: [GroupedUsageRow] {
-        Array(Aggregation.grouped(events: filteredEvents, by: \.model).prefix(12))
+        let key = GroupedRowsCacheKey(
+            filter: eventFilterKey(source: selectedSection.sourceFilter, project: projectFilter, model: modelFilter),
+            kind: .model
+        )
+        if let cached = groupedRowsCache[key] {
+            return cached
+        }
+        let rows = Array(Aggregation.grouped(events: filteredEvents, by: \.model).prefix(12))
+        groupedRowsCache[key] = rows
+        return rows
     }
 
     var sessionRows: [GroupedUsageRow] {
-        Array(Aggregation.grouped(events: filteredEvents, by: \.sessionId).prefix(20))
+        let key = GroupedRowsCacheKey(
+            filter: eventFilterKey(source: selectedSection.sourceFilter, project: projectFilter, model: modelFilter),
+            kind: .session
+        )
+        if let cached = groupedRowsCache[key] {
+            return cached
+        }
+        let rows = Array(Aggregation.grouped(events: filteredEvents, by: \.sessionId).prefix(20))
+        groupedRowsCache[key] = rows
+        return rows
     }
 
     var sessionCount: Int {
@@ -489,6 +540,8 @@ final class DashboardModel: ObservableObject {
         bucketCache.removeAll()
         sessionCountCache.removeAll()
         deviceCountCache.removeAll()
+        groupedRowsCache.removeAll()
+        deviceOptionsCache = nil
     }
 
     private func markLoadedWindow(eventAfter: Date?) {

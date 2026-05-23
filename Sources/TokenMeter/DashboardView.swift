@@ -699,8 +699,10 @@ struct SectionSelector: View {
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                         .frame(height: 30)
+                        .contentShape(Capsule(style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
                 .foregroundStyle(selection == section ? Color.black.opacity(0.88) : TokenMeterTheme.secondaryText)
                 .background {
                     Capsule(style: .continuous)

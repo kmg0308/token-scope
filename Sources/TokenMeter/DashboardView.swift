@@ -175,6 +175,8 @@ struct DashboardView: View {
                         .fill(TokenMeterTheme.control)
                 }
 
+                devicePicker
+
                 Spacer()
 
                 Button {
@@ -457,18 +459,6 @@ struct DashboardView: View {
     private var filters: some View {
         HStack(spacing: 18) {
             Menu {
-                ForEach(model.deviceOptions) { option in
-                    menuSelectionButton(option.title, isSelected: model.deviceFilter == option.id) {
-                        model.deviceFilter = option.id
-                        model.normalizeFilters()
-                    }
-                }
-            } label: {
-                TokenFilterMenuLabel(title: "Device", value: model.selectedDeviceTitle, width: 210)
-            }
-            .menuStyle(.borderlessButton)
-
-            Menu {
                 ForEach(model.projectOptions, id: \.self) { project in
                     menuSelectionButton(shortProject(project), isSelected: model.projectFilter == project) {
                         model.projectFilter = project
@@ -496,6 +486,22 @@ struct DashboardView: View {
         }
         .padding(14)
         .tokenSurface()
+    }
+
+    private var devicePicker: some View {
+        Menu {
+            ForEach(model.deviceOptions) { option in
+                menuSelectionButton(option.title, isSelected: model.deviceFilter == option.id) {
+                    model.deviceFilter = option.id
+                    model.normalizeFilters()
+                }
+            }
+        } label: {
+            TokenMenuLabel(icon: "desktopcomputer", title: model.selectedDeviceTitle)
+        }
+        .menuStyle(.borderlessButton)
+        .frame(maxWidth: 230)
+        .help("Device scope")
     }
 
     private var details: some View {

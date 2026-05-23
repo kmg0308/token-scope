@@ -2,6 +2,12 @@ import Foundation
 import SwiftUI
 import TokenMeterCore
 
+struct DashboardDeviceOption: Identifiable, Hashable {
+    var id: String
+    var title: String
+    var deviceId: String?
+}
+
 enum DashboardSection: String, CaseIterable, Identifiable {
     case all = "All"
     case codex = "Codex"
@@ -79,18 +85,32 @@ final class DashboardModel: ObservableObject {
     @Published var bucketSelection: DashboardBucketSelection = .automatic
     @Published var projectFilter = "All Projects"
     @Published var modelFilter = "All Models"
+    @Published var deviceFilter = DashboardModel.allDevicesFilterId
+    @Published var syncFolderPath: String?
     @Published var isScanning = false
     @Published var errorMessage: String?
 
-    private let scanner = TokenLogScanner()
+    let localDevice: TokenDeviceMetadata
+
+    private static let allDevicesFilterId = "all-devices"
+    private static let deviceIdKey = "tokenMeter.localDeviceId"
+    private static let syncFolderPathKey = "tokenMeter.syncFolderPath"
+
+    private let defaults: UserDefaults
+    private let scanner: TokenLogScanner
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let device = Self.loadLocalDevice(defaults: defaults)
+        self.localDevice = device
+        self.scanner = TokenLogScanner(localDevice: device)
+        self.syncFolderPath = defaults.string(forKey: Self.syncFolderPathKey)
         refresh()
     }
 
-    func refresh(restartInProgress: Bool = false) {
+    func refresh(restartInProgress: Bool = false, fullSync: Bool = false) {
         if isScanning {
             guard restartInProgress else { return }
             scanTask?.cancel()
@@ -101,11 +121,17 @@ final class DashboardModel: ObservableObject {
         let scanner = scanner
         isScanning = true
         errorMessage = nil
-        let windowStart = scanWindowStart(for: range)
+        let windowStart = fullSync ? nil : scanWindowStart(for: range)
+        let syncFolderURL = syncFolderURL
 
         scanTask = Task { @MainActor [weak self] in
             let worker = Task.detached(priority: .userInitiated) {
-                scanner.scan(modifiedAfter: windowStart, isCancelled: { Task.isCancelled })
+                scanner.scan(
+                    modifiedAfter: windowStart,
+                    syncFolder: syncFolderURL,
+                    replaceSyncLedger: fullSync,
+                    isCancelled: { Task.isCancelled }
+                )
             }
             let result = await withTaskCancellationHandler {
                 await worker.value
@@ -131,10 +157,82 @@ final class DashboardModel: ObservableObject {
         if !modelOptions.contains(modelFilter) {
             modelFilter = "All Models"
         }
+        if !deviceOptions.contains(where: { $0.id == deviceFilter }) {
+            deviceFilter = Self.allDevicesFilterId
+        }
     }
 
     var bucket: BucketInterval {
         bucketSelection.resolved(for: range)
+    }
+
+    var syncFolderURL: URL? {
+        guard let syncFolderPath, !syncFolderPath.isEmpty else { return nil }
+        return URL(fileURLWithPath: syncFolderPath)
+    }
+
+    var defaultICloudSyncFolderURL: URL? {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Mobile Documents", isDirectory: true)
+            .appendingPathComponent("com~apple~CloudDocs", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: root.path) else { return nil }
+        return root.appendingPathComponent("TokenMeter", isDirectory: true)
+    }
+
+    var selectedDeviceId: String? {
+        deviceOptions.first { $0.id == deviceFilter }?.deviceId
+    }
+
+    var selectedDeviceTitle: String {
+        deviceOptions.first { $0.id == deviceFilter }?.title ?? "All Devices"
+    }
+
+    var deviceOptions: [DashboardDeviceOption] {
+        var options = [
+            DashboardDeviceOption(id: Self.allDevicesFilterId, title: "All Devices", deviceId: nil),
+            DashboardDeviceOption(id: localDevice.id, title: "This Mac", deviceId: localDevice.id)
+        ]
+        let remoteDevices = Dictionary(grouping: scanResult.events, by: \.deviceId)
+            .compactMap { deviceId, events -> DashboardDeviceOption? in
+                guard deviceId != localDevice.id else { return nil }
+                let name = events.last?.deviceName ?? deviceId
+                return DashboardDeviceOption(id: deviceId, title: name, deviceId: deviceId)
+            }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        options.append(contentsOf: remoteDevices)
+        return options
+    }
+
+    var deviceCount: Int {
+        Set(filteredEvents.map(\.deviceId)).count
+    }
+
+    func useDefaultICloudSyncFolder() {
+        guard let url = defaultICloudSyncFolderURL else {
+            errorMessage = "iCloud Drive folder was not found on this Mac."
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            setSyncFolder(url)
+        } catch {
+            errorMessage = "Could not create the iCloud Drive sync folder: \(error.localizedDescription)"
+        }
+    }
+
+    func setSyncFolder(_ url: URL) {
+        defaults.set(url.path, forKey: Self.syncFolderPathKey)
+        syncFolderPath = url.path
+        deviceFilter = Self.allDevicesFilterId
+        refresh(restartInProgress: true, fullSync: true)
+    }
+
+    func clearSyncFolder() {
+        defaults.removeObject(forKey: Self.syncFolderPathKey)
+        syncFolderPath = nil
+        deviceFilter = Self.allDevicesFilterId
+        refresh(restartInProgress: true)
     }
 
     var filteredEvents: [TokenEvent] {
@@ -143,7 +241,8 @@ final class DashboardModel: ObservableObject {
             source: selectedSection.sourceFilter,
             range: range,
             project: projectFilter,
-            model: modelFilter
+            model: modelFilter,
+            deviceId: selectedDeviceId
         )
     }
 
@@ -153,7 +252,8 @@ final class DashboardModel: ObservableObject {
             source: source,
             range: range,
             project: projectFilter,
-            model: modelFilter
+            model: modelFilter,
+            deviceId: selectedDeviceId
         )
     }
 
@@ -168,7 +268,8 @@ final class DashboardModel: ObservableObject {
             source: selectedSection.sourceFilter,
             interval: interval,
             project: projectFilter,
-            model: modelFilter
+            model: modelFilter,
+            deviceId: selectedDeviceId
         )
     }
 
@@ -210,7 +311,8 @@ final class DashboardModel: ObservableObject {
             source: .all,
             range: .today,
             project: nil,
-            model: nil
+            model: nil,
+            deviceId: selectedDeviceId
         )
         return Aggregation.totalUsage(events: events)
     }
@@ -221,7 +323,8 @@ final class DashboardModel: ObservableObject {
             source: selectedSection.sourceFilter,
             range: range,
             project: project,
-            model: model
+            model: model,
+            deviceId: selectedDeviceId
         )
     }
 
@@ -234,5 +337,18 @@ final class DashboardModel: ObservableObject {
         case .all:
             return nil
         }
+    }
+
+    private static func loadLocalDevice(defaults: UserDefaults) -> TokenDeviceMetadata {
+        let id: String
+        if let stored = defaults.string(forKey: deviceIdKey), !stored.isEmpty {
+            id = stored
+        } else {
+            id = UUID().uuidString
+            defaults.set(id, forKey: deviceIdKey)
+        }
+
+        let name = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+        return TokenDeviceMetadata(id: id, name: name)
     }
 }

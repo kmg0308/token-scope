@@ -4,9 +4,9 @@
 
 [Latest Release](https://github.com/kmg0308/token-scope/releases/latest) · [Download ZIP](https://github.com/kmg0308/token-scope/releases/latest/download/TokenMeter.zip)
 
-TokenMeter is a local-only macOS app for viewing Codex and Claude Code token usage from local log files.
+TokenMeter is a local-first macOS app for viewing Codex and Claude Code token usage from local log files.
 
-It does not send prompts, code, messages, or token records to any server. GitHub network calls are used only for update checks and update downloads.
+By default, it does not send prompts, code, messages, or token records to any server. GitHub network calls are used only for update checks and update downloads. If Sync Folder is enabled, TokenMeter writes sanitized usage records to the folder the user chooses.
 
 ## Features
 
@@ -19,8 +19,28 @@ It does not send prompts, code, messages, or token records to any server. GitHub
   - `~/.codex/sessions/**/*.jsonl`
   - `~/.codex/archived_sessions/*.jsonl`
   - `~/.claude/projects/**/*.jsonl`
+- Optional Sync Folder support for combining multiple Macs through iCloud Drive, Dropbox, Syncthing, or any folder that syncs between devices.
 - GitHub Release update check, one-click update install, and relaunch.
 - Simple dark macOS UI with colored usage charts.
+
+## Multi-Mac Usage
+
+TokenMeter can combine usage from multiple Macs without copying the original Codex or Claude Code logs.
+
+1. Open TokenMeter on each Mac.
+2. In `Sync Folder`, choose the same synced folder. `Use iCloud Drive` creates `iCloud Drive/TokenMeter` when iCloud Drive is available.
+3. Each Mac writes one sanitized file under `devices/`.
+4. Every Mac reads all device files and shows the same `All Devices` total after the folder finishes syncing.
+
+The sync file contains token counts, timestamps, source, model, device id, and hashed project/session keys. It does not contain prompts, responses, code, raw project paths, or raw log file paths.
+
+The dashboard includes a device filter:
+
+- `All Devices`: merged usage from every device file in the Sync Folder.
+- `This Mac`: only the current Mac.
+- Other device names: one synced Mac at a time.
+
+The first time a Sync Folder is selected, TokenMeter runs a full local scan to seed that Mac's ledger. Later refreshes merge newly scanned events into the existing device file.
 
 ## Build
 
@@ -95,6 +115,8 @@ For fully automatic app replacement, Sparkle is the standard macOS updater, but 
 ## Privacy
 
 TokenMeter reads token fields and metadata such as model, project path, session id, and timestamps. It does not store or display prompt or response text.
+
+When Sync Folder is enabled, TokenMeter writes only sanitized usage records to the chosen folder. Raw project paths and session ids are hashed before export. The original `~/.codex` and `~/.claude` JSONL files stay local.
 
 ## Requirements
 

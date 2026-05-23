@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a local macOS app that helps a developer understand Codex and Claude Code token usage over time.
+Build a local-first macOS app that helps a developer understand Codex and Claude Code token usage over time.
 
 ## Core Information Architecture
 
@@ -12,7 +12,7 @@ The app uses three dashboard sections:
 - Codex: Codex-only usage with Codex token fields.
 - Claude Code: Claude-only usage with Claude token fields.
 
-All sections share the same time range, bucket size, model filter, and project filter.
+All sections share the same time range, bucket size, model filter, project filter, and device filter.
 
 The default screen intentionally hides secondary tables. The first view should answer only three questions:
 
@@ -37,6 +37,7 @@ The dashboard shows:
 - Main time-series graph.
 - Breakdown graph.
 - Session, model, and project tables.
+- Sync Folder controls.
 - Data status.
 - Update controls.
 
@@ -48,6 +49,8 @@ TokenMeter reads local JSONL records:
 - Claude Code: `~/.claude/projects`.
 
 The app parses token fields only. Prompt and response text are ignored.
+
+Optionally, TokenMeter can write sanitized usage records to a user-chosen Sync Folder. Each Mac writes one device ledger under `devices/`, and every Mac reads all device ledgers for `All Devices` totals. The original Codex and Claude Code JSONL files are never copied into the Sync Folder.
 
 ## Design Direction
 

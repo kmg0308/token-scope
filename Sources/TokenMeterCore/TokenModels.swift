@@ -98,6 +98,8 @@ public struct TokenEvent: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var source: TokenSource
     public var timestamp: Date
+    public var deviceId: String
+    public var deviceName: String
     public var projectPath: String
     public var sessionId: String
     public var model: String
@@ -108,6 +110,8 @@ public struct TokenEvent: Identifiable, Codable, Hashable, Sendable {
         id: String,
         source: TokenSource,
         timestamp: Date,
+        deviceId: String = TokenDeviceMetadata.localFallback.id,
+        deviceName: String = TokenDeviceMetadata.localFallback.name,
         projectPath: String = "Unknown",
         sessionId: String = "Unknown",
         model: String = "Unknown",
@@ -117,11 +121,28 @@ public struct TokenEvent: Identifiable, Codable, Hashable, Sendable {
         self.id = id
         self.source = source
         self.timestamp = timestamp
+        self.deviceId = deviceId.isEmpty ? TokenDeviceMetadata.localFallback.id : deviceId
+        self.deviceName = deviceName.isEmpty ? TokenDeviceMetadata.localFallback.name : deviceName
         self.projectPath = projectPath.isEmpty ? "Unknown" : projectPath
         self.sessionId = sessionId.isEmpty ? "Unknown" : sessionId
         self.model = model.isEmpty ? "Unknown" : model
         self.usage = usage
         self.rawFilePath = rawFilePath
+    }
+
+    public func withDevice(_ device: TokenDeviceMetadata) -> TokenEvent {
+        TokenEvent(
+            id: id,
+            source: source,
+            timestamp: timestamp,
+            deviceId: device.id,
+            deviceName: device.name,
+            projectPath: projectPath,
+            sessionId: sessionId,
+            model: model,
+            usage: usage,
+            rawFilePath: rawFilePath
+        )
     }
 }
 
@@ -131,6 +152,7 @@ public struct ScanResult: Sendable {
     public var claudeFileCount: Int
     public var parseErrorCount: Int
     public var sourceStatuses: [ScanSourceStatus]
+    public var syncStatus: SyncFolderStatus
     public var scannedAt: Date
 
     public init(
@@ -139,6 +161,7 @@ public struct ScanResult: Sendable {
         claudeFileCount: Int = 0,
         parseErrorCount: Int = 0,
         sourceStatuses: [ScanSourceStatus] = [],
+        syncStatus: SyncFolderStatus = .disabled,
         scannedAt: Date = Date()
     ) {
         self.events = events
@@ -146,8 +169,58 @@ public struct ScanResult: Sendable {
         self.claudeFileCount = claudeFileCount
         self.parseErrorCount = parseErrorCount
         self.sourceStatuses = sourceStatuses
+        self.syncStatus = syncStatus
         self.scannedAt = scannedAt
     }
+}
+
+public struct TokenDeviceMetadata: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+
+    public init(id: String, name: String) {
+        self.id = id.isEmpty ? Self.localFallback.id : id
+        self.name = name.isEmpty ? Self.localFallback.name : name
+    }
+
+    public static let localFallback = TokenDeviceMetadata(id: "local-device", name: "This Mac")
+}
+
+public struct SyncFolderStatus: Hashable, Sendable {
+    public var path: String?
+    public var exists: Bool
+    public var deviceFileCount: Int
+    public var importedEventCount: Int
+    public var exportedEventCount: Int
+    public var parseErrorCount: Int
+    public var exportError: String?
+    public var lastSyncedAt: Date?
+
+    public init(
+        path: String?,
+        exists: Bool,
+        deviceFileCount: Int = 0,
+        importedEventCount: Int = 0,
+        exportedEventCount: Int = 0,
+        parseErrorCount: Int = 0,
+        exportError: String? = nil,
+        lastSyncedAt: Date? = nil
+    ) {
+        self.path = path
+        self.exists = exists
+        self.deviceFileCount = deviceFileCount
+        self.importedEventCount = importedEventCount
+        self.exportedEventCount = exportedEventCount
+        self.parseErrorCount = parseErrorCount
+        self.exportError = exportError
+        self.lastSyncedAt = lastSyncedAt
+    }
+
+    public var isConfigured: Bool {
+        path != nil
+    }
+
+    public static let disabled = SyncFolderStatus(path: nil, exists: false)
 }
 
 public struct ScanSourceStatus: Identifiable, Hashable, Sendable {

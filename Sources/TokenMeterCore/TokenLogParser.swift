@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum TokenLogParser {
@@ -202,6 +203,8 @@ public enum TokenLogParser {
     }
 
     private static func stableID(parts: [String]) -> String {
-        parts.joined(separator: "|")
+        let rawValue = parts.joined(separator: "|")
+        let digest = SHA256.hash(data: Data(rawValue.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }

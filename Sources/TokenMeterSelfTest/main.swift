@@ -12,6 +12,7 @@ enum TokenMeterSelfTest {
         try dashboardRangesExposeShortOptions()
         try dashboardBucketOptionsStayReadable()
         try scannerIncludesAllRecentClaudeFiles()
+        try syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents()
         if CommandLine.arguments.contains("--real-scan") {
             runRealScanSmokeTest()
         }
@@ -191,6 +192,56 @@ enum TokenMeterSelfTest {
         try expect(claudeStatus?.scannedFileCount == 45, "scanner reports Claude scanned files")
     }
 
+    private static func syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeA = directory.appendingPathComponent("home-a", isDirectory: true)
+        let homeB = directory.appendingPathComponent("home-b", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        try writeClaudeLog(
+            homeDirectory: homeA,
+            fileName: "a.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/secret-project-a",
+            sessionId: "session-a",
+            requestId: "request-a",
+            input: 10
+        )
+        try writeClaudeLog(
+            homeDirectory: homeB,
+            fileName: "b.jsonl",
+            timestamp: "2026-01-01T00:01:00.000Z",
+            cwd: "/tmp/secret-project-b",
+            sessionId: "session-b",
+            requestId: "request-b",
+            input: 20
+        )
+
+        let deviceA = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let deviceB = TokenDeviceMetadata(id: "mac-b", name: "Mac B")
+        let scannerA = TokenLogScanner(homeDirectory: homeA, localDevice: deviceA)
+        let scannerB = TokenLogScanner(homeDirectory: homeB, localDevice: deviceB)
+
+        let firstA = scannerA.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(firstA.syncStatus.exists, "sync folder exists for first device")
+        try expect(firstA.syncStatus.exportedEventCount == 1, "first device exports one event")
+        try expect(Aggregation.totalUsage(events: firstA.events).total == 10, "first sync total")
+
+        let firstB = scannerB.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(firstB.syncStatus.deviceFileCount == 2, "sync folder has both device ledgers")
+        try expect(Aggregation.totalUsage(events: firstB.events).total == 30, "second device sees merged total")
+
+        let mergedA = scannerA.scan(syncFolder: syncFolder)
+        try expect(Aggregation.totalUsage(events: mergedA.events).total == 30, "local and sync ledgers dedupe")
+        try expect(Set(mergedA.events.map(\.deviceId)) == ["mac-a", "mac-b"], "merged events keep device ids")
+
+        let ledgerText = try syncLedgerText(syncFolder: syncFolder)
+        try expect(!ledgerText.contains("secret-project"), "sync ledger omits raw project paths")
+        try expect(!ledgerText.contains(".claude"), "sync ledger omits raw log paths")
+    }
+
     private static func temporaryFile(_ content: String) -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -198,6 +249,38 @@ enum TokenMeterSelfTest {
         let url = directory.appendingPathComponent("sample.jsonl")
         try? content.write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+
+    private static func writeClaudeLog(
+        homeDirectory: URL,
+        fileName: String,
+        timestamp: String,
+        cwd: String,
+        sessionId: String,
+        requestId: String,
+        input: Int
+    ) throws {
+        let projectDirectory = homeDirectory
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+            .appendingPathComponent("sample", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDirectory, withIntermediateDirectories: true)
+        let content = """
+        {"timestamp":"\(timestamp)","sessionId":"\(sessionId)","requestId":"\(requestId)","uuid":"\(requestId)-uuid","cwd":"\(cwd)","type":"assistant","message":{"model":"claude-opus","usage":{"input_tokens":\(input),"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}
+        """
+        try content.write(to: projectDirectory.appendingPathComponent(fileName), atomically: true, encoding: .utf8)
+    }
+
+    private static func syncLedgerText(syncFolder: URL) throws -> String {
+        let devicesDirectory = syncFolder.appendingPathComponent("devices", isDirectory: true)
+        let files = try FileManager.default.contentsOfDirectory(
+            at: devicesDirectory,
+            includingPropertiesForKeys: nil
+        )
+        return try files
+            .filter { $0.pathExtension == "jsonl" }
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
     }
 
     private static func date(year: Int, month: Int, day: Int, hour: Int, minute: Int, calendar: Calendar) -> Date {

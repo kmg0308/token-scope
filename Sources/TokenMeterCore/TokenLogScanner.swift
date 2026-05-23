@@ -3,19 +3,27 @@ import Foundation
 public final class TokenLogScanner: @unchecked Sendable {
     private let homeDirectory: URL
     private let fileManager: FileManager
+    private let localDevice: TokenDeviceMetadata
 
-    public init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser, fileManager: FileManager = .default) {
+    public init(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        fileManager: FileManager = .default,
+        localDevice: TokenDeviceMetadata = .localFallback
+    ) {
         self.homeDirectory = homeDirectory
         self.fileManager = fileManager
+        self.localDevice = localDevice
     }
 
     public func scan(
         modifiedAfter: Date? = nil,
+        syncFolder: URL? = nil,
+        replaceSyncLedger: Bool = false,
         isCancelled: () -> Bool = { false }
     ) -> ScanResult {
         guard !isCancelled() else { return ScanResult() }
         var roots = scanRoots(modifiedAfter: modifiedAfter)
-        var events: [TokenEvent] = []
+        var localEvents: [TokenEvent] = []
 
         for index in roots.indices {
             guard roots[index].source == .codex else { continue }
@@ -24,7 +32,8 @@ public final class TokenLogScanner: @unchecked Sendable {
             for file in files {
                 guard !isCancelled() else { break }
                 do {
-                    events.append(contentsOf: try TokenLogParser.parseCodexFile(at: file, isCancelled: isCancelled))
+                    let parsed = try TokenLogParser.parseCodexFile(at: file, isCancelled: isCancelled)
+                    localEvents.append(contentsOf: parsed.map { $0.withDevice(localDevice) })
                 } catch {
                     parseErrors += 1
                 }
@@ -39,7 +48,8 @@ public final class TokenLogScanner: @unchecked Sendable {
             for file in files {
                 guard !isCancelled() else { break }
                 do {
-                    events.append(contentsOf: try TokenLogParser.parseClaudeFile(at: file, isCancelled: isCancelled))
+                    let parsed = try TokenLogParser.parseClaudeFile(at: file, isCancelled: isCancelled)
+                    localEvents.append(contentsOf: parsed.map { $0.withDevice(localDevice) })
                 } catch {
                     parseErrors += 1
                 }
@@ -60,12 +70,21 @@ public final class TokenLogScanner: @unchecked Sendable {
             .map(\.parseErrorCount)
             .reduce(0, +)
 
+        let syncOutcome = syncEvents(
+            localEvents: localEvents,
+            syncFolder: syncFolder,
+            replaceSyncLedger: replaceSyncLedger,
+            isCancelled: isCancelled
+        )
+        let events = deduplicated(events: localEvents + syncOutcome.events)
+
         return ScanResult(
-            events: events.sorted { $0.timestamp < $1.timestamp },
+            events: events,
             codexFileCount: codexFileCount,
             claudeFileCount: claudeFileCount,
             parseErrorCount: parseErrors,
             sourceStatuses: sourceStatuses,
+            syncStatus: syncOutcome.status,
             scannedAt: Date()
         )
     }
@@ -175,5 +194,40 @@ public final class TokenLogScanner: @unchecked Sendable {
 
     private func modificationDate(_ url: URL) -> Date? {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
+    private func syncEvents(
+        localEvents: [TokenEvent],
+        syncFolder: URL?,
+        replaceSyncLedger: Bool,
+        isCancelled: () -> Bool
+    ) -> (events: [TokenEvent], status: SyncFolderStatus) {
+        guard let syncFolder else {
+            return ([], .disabled)
+        }
+
+        let store = TokenSyncLedgerStore(
+            folder: syncFolder,
+            localDevice: localDevice,
+            fileManager: fileManager
+        )
+        return store.synchronize(
+            localEvents: localEvents,
+            replaceLocalLedger: replaceSyncLedger,
+            isCancelled: isCancelled
+        )
+    }
+
+    private func deduplicated(events: [TokenEvent]) -> [TokenEvent] {
+        var eventsByKey: [String: TokenEvent] = [:]
+        for event in events {
+            eventsByKey["\(event.deviceId)|\(event.id)"] = event
+        }
+        return eventsByKey.values.sorted {
+            if $0.timestamp == $1.timestamp {
+                return $0.id < $1.id
+            }
+            return $0.timestamp < $1.timestamp
+        }
     }
 }

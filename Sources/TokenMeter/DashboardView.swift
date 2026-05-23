@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TokenMeterCore
 
@@ -42,6 +43,8 @@ struct DashboardView: View {
                             .padding(.top, 10)
                     }
 
+                    syncFolderBlock
+
                     dataSourcesBlock
 
                     dataFooter
@@ -71,6 +74,9 @@ struct DashboardView: View {
             model.refresh(restartInProgress: true)
         }
         .onChange(of: model.selectedSection) { _ in
+            model.normalizeFilters()
+        }
+        .onChange(of: model.deviceFilter) { _ in
             model.normalizeFilters()
         }
         .task {
@@ -136,13 +142,14 @@ struct DashboardView: View {
     }
 
     private var headerSubtitle: String {
+        let deviceScope = model.selectedDeviceTitle
         switch model.selectedSection {
         case .all:
-            "Combined local usage"
+            return "Combined usage - \(deviceScope)"
         case .codex:
-            "Codex local sessions"
+            return "Codex sessions - \(deviceScope)"
         case .claude:
-            "Claude Code local sessions"
+            return "Claude Code sessions - \(deviceScope)"
         }
     }
 
@@ -226,6 +233,9 @@ struct DashboardView: View {
                 inlineMetric("Sessions", TokenFormatters.integer(model.sessionCount))
             case .codex, .claude:
                 inlineMetric("Sessions", TokenFormatters.integer(model.sessionCount))
+            }
+            if model.scanResult.syncStatus.isConfigured {
+                inlineMetric("Devices", TokenFormatters.integer(model.deviceCount))
             }
             Spacer()
         }
@@ -447,6 +457,18 @@ struct DashboardView: View {
     private var filters: some View {
         HStack(spacing: 18) {
             Menu {
+                ForEach(model.deviceOptions) { option in
+                    menuSelectionButton(option.title, isSelected: model.deviceFilter == option.id) {
+                        model.deviceFilter = option.id
+                        model.normalizeFilters()
+                    }
+                }
+            } label: {
+                TokenFilterMenuLabel(title: "Device", value: model.selectedDeviceTitle, width: 210)
+            }
+            .menuStyle(.borderlessButton)
+
+            Menu {
                 ForEach(model.projectOptions, id: \.self) { project in
                     menuSelectionButton(shortProject(project), isSelected: model.projectFilter == project) {
                         model.projectFilter = project
@@ -495,11 +517,29 @@ struct DashboardView: View {
         }
     }
 
+    private var syncFolderBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sync Folder")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.primaryText)
+
+            SyncFolderPanel(
+                status: model.scanResult.syncStatus,
+                configuredPath: model.syncFolderPath,
+                canUseICloud: model.defaultICloudSyncFolderURL != nil,
+                useICloud: model.useDefaultICloudSyncFolder,
+                chooseFolder: chooseSyncFolder,
+                turnOff: model.clearSyncFolder
+            )
+        }
+    }
+
     private var dataFooter: some View {
         HStack(spacing: 14) {
             footerItem("Codex files", model.scanResult.codexFileCount)
             footerItem("Claude files", model.scanResult.claudeFileCount)
             footerItem("Events", model.scanResult.events.count)
+            footerItem("Devices", Set(model.scanResult.events.map(\.deviceId)).count)
             footerItem("Errors", model.scanResult.parseErrorCount)
             Spacer()
             Text("Scanned \(model.scanResult.scannedAt.formatted(date: .omitted, time: .shortened))")
@@ -522,6 +562,15 @@ struct DashboardView: View {
     private var dashboardNotice: DashboardNotice? {
         let totalFiles = model.scanResult.sourceStatuses.map(\.totalFileCount).reduce(0, +)
         let scannedFiles = model.scanResult.sourceStatuses.map(\.scannedFileCount).reduce(0, +)
+
+        if let errorMessage = model.errorMessage {
+            return DashboardNotice(
+                icon: "exclamationmark.triangle",
+                title: "Action failed",
+                message: errorMessage,
+                tint: TokenMeterTheme.warning
+            )
+        }
 
         if model.isScanning && model.scanResult.events.isEmpty {
             return DashboardNotice(
@@ -570,7 +619,38 @@ struct DashboardView: View {
             )
         }
 
+        if let exportError = model.scanResult.syncStatus.exportError {
+            return DashboardNotice(
+                icon: "exclamationmark.triangle",
+                title: "Sync export failed",
+                message: exportError,
+                tint: TokenMeterTheme.warning
+            )
+        }
+
+        if model.scanResult.syncStatus.parseErrorCount > 0 {
+            return DashboardNotice(
+                icon: "exclamationmark.triangle",
+                title: "Some sync records were skipped",
+                message: "\(model.scanResult.syncStatus.parseErrorCount) sync record(s) could not be read.",
+                tint: TokenMeterTheme.warning
+            )
+        }
+
         return nil
+    }
+
+    private func chooseSyncFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose TokenMeter Sync Folder"
+        panel.prompt = "Use Folder"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            model.setSyncFolder(url)
+        }
     }
 }
 
@@ -705,6 +785,147 @@ struct DataSourceStatusPanel: View {
             }
         }
         .tokenSurface()
+    }
+}
+
+struct SyncFolderPanel: View {
+    let status: SyncFolderStatus
+    let configuredPath: String?
+    let canUseICloud: Bool
+    let useICloud: () -> Void
+    let chooseFolder: () -> Void
+    let turnOff: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: statusIcon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(statusColor)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(statusTitle)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(TokenMeterTheme.primaryText)
+                        if let lastSyncedAt = status.lastSyncedAt {
+                            Text("Synced \(lastSyncedAt.formatted(date: .omitted, time: .shortened))")
+                                .font(.system(size: 11))
+                                .foregroundStyle(TokenMeterTheme.tertiaryText)
+                        }
+                    }
+
+                    Text(pathText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(TokenMeterTheme.tertiaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(configuredPath ?? "")
+                }
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    if status.isConfigured {
+                        syncPill("Files", status.deviceFileCount)
+                        syncPill("Synced", status.importedEventCount)
+                        syncPill("Exported", status.exportedEventCount)
+                        if status.parseErrorCount > 0 {
+                            syncPill("Errors", status.parseErrorCount, tint: TokenMeterTheme.warning)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Spacer()
+
+                Button {
+                    useICloud()
+                } label: {
+                    Label("Use iCloud Drive", systemImage: "icloud")
+                }
+                .buttonStyle(TokenPillButtonStyle())
+                .disabled(!canUseICloud)
+
+                Button {
+                    chooseFolder()
+                } label: {
+                    Label(status.isConfigured ? "Change" : "Choose Folder", systemImage: "folder")
+                }
+                .buttonStyle(TokenPillButtonStyle())
+
+                if status.isConfigured {
+                    Button {
+                        turnOff()
+                    } label: {
+                        Label("Turn Off", systemImage: "xmark.circle")
+                    }
+                    .buttonStyle(TokenPillButtonStyle())
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .tokenSurface()
+    }
+
+    private var statusTitle: String {
+        if !status.isConfigured {
+            return "Off"
+        }
+        if !status.exists {
+            return "Missing folder"
+        }
+        if status.exportError != nil || status.parseErrorCount > 0 {
+            return "Needs attention"
+        }
+        return "Active"
+    }
+
+    private var pathText: String {
+        guard let configuredPath, !configuredPath.isEmpty else {
+            return "No folder selected"
+        }
+        return abbreviatedPath(configuredPath)
+    }
+
+    private var statusIcon: String {
+        if !status.isConfigured {
+            return "icloud.slash"
+        }
+        if !status.exists || status.exportError != nil || status.parseErrorCount > 0 {
+            return "exclamationmark.triangle"
+        }
+        return "checkmark.icloud"
+    }
+
+    private var statusColor: Color {
+        if !status.isConfigured {
+            return TokenMeterTheme.tertiaryText
+        }
+        if !status.exists || status.exportError != nil || status.parseErrorCount > 0 {
+            return TokenMeterTheme.warning
+        }
+        return TokenMeterTheme.positive
+    }
+
+    private func syncPill(_ title: String, _ value: Int, tint: Color = TokenMeterTheme.secondaryText) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .foregroundStyle(TokenMeterTheme.tertiaryText)
+            Text(TokenFormatters.integer(value))
+                .foregroundStyle(tint)
+                .monospacedDigit()
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background {
+            Capsule(style: .continuous)
+                .fill(TokenMeterTheme.control)
+        }
     }
 }
 

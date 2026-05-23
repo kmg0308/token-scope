@@ -143,6 +143,7 @@ public enum Aggregation {
         range: TimeRangePreset,
         project: String?,
         model: String?,
+        deviceId: String? = nil,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> [TokenEvent] {
@@ -153,7 +154,8 @@ public enum Aggregation {
             let timeMatches = event.timestamp >= interval.start && event.timestamp <= interval.end
             let projectMatches = project == nil || project == "All Projects" || event.projectPath == project
             let modelMatches = model == nil || model == "All Models" || event.model == model
-            return sourceMatches && timeMatches && projectMatches && modelMatches
+            let deviceMatches = deviceId == nil || event.deviceId == deviceId
+            return sourceMatches && timeMatches && projectMatches && modelMatches && deviceMatches
         }
     }
 
@@ -162,14 +164,16 @@ public enum Aggregation {
         source: TokenSource,
         interval: DateInterval,
         project: String?,
-        model: String?
+        model: String?,
+        deviceId: String? = nil
     ) -> [TokenEvent] {
         events.filter { event in
             let sourceMatches = source == .all || event.source == source
             let timeMatches = event.timestamp >= interval.start && event.timestamp <= interval.end
             let projectMatches = project == nil || project == "All Projects" || event.projectPath == project
             let modelMatches = model == nil || model == "All Models" || event.model == model
-            return sourceMatches && timeMatches && projectMatches && modelMatches
+            let deviceMatches = deviceId == nil || event.deviceId == deviceId
+            return sourceMatches && timeMatches && projectMatches && modelMatches && deviceMatches
         }
     }
 

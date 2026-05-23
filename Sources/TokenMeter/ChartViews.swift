@@ -1,9 +1,92 @@
+import AppKit
 import SwiftUI
 import TokenMeterCore
 
 enum ChartMode: Equatable {
     case bySource
     case byTokenKind(TokenSource)
+}
+
+private struct ChartHoverTrackingView: NSViewRepresentable {
+    var onHover: (CGPoint?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> TrackingView {
+        let view = TrackingView()
+        view.onHover = onHover
+        context.coordinator.onHover = onHover
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ view: TrackingView, context: Context) {
+        view.onHover = onHover
+        view.coordinator = context.coordinator
+        context.coordinator.onHover = onHover
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: TrackingView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
+    final class Coordinator {
+        var onHover: ((CGPoint?) -> Void)?
+        private var eventMonitor: Any?
+
+        deinit {
+            if let eventMonitor {
+                NSEvent.removeMonitor(eventMonitor)
+            }
+        }
+
+        @MainActor
+        func updateEventMonitor(for view: TrackingView) {
+            removeEventMonitor()
+            guard let window = view.window else { return }
+            onHover = view.onHover
+
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .scrollWheel]) { [weak self, weak view, weak window] event in
+                MainActor.assumeIsolated {
+                    guard let self, let view, event.window === window else { return }
+                    if event.type == .scrollWheel {
+                        self.onHover?(nil)
+                        return
+                    }
+
+                    let point = view.convert(event.locationInWindow, from: nil)
+                    self.onHover?(view.bounds.contains(point) ? point : nil)
+                }
+                return event
+            }
+        }
+
+        @MainActor
+        func removeEventMonitor() {
+            guard let eventMonitor else { return }
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+    }
+
+    final class TrackingView: NSView {
+        var onHover: ((CGPoint?) -> Void)?
+        var coordinator: Coordinator?
+
+        override var isFlipped: Bool { true }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.acceptsMouseMovedEvents = true
+            if window == nil {
+                coordinator?.removeEventMonitor()
+            } else {
+                coordinator?.updateEventMonitor(for: self)
+            }
+        }
+    }
 }
 
 struct TokenBarChart: View {
@@ -29,23 +112,27 @@ struct TokenBarChart: View {
                     sparseTimeline: sparseTimeline
                 )
             }
-            .contentShape(Rectangle())
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let point):
-                    let bucket = hoveredBucket(
-                        at: point,
-                        in: proxy.size,
-                        buckets: visibleBuckets,
-                        sparseTimeline: sparseTimeline
-                    )
-                    if hoveredBucket?.id != bucket?.id {
-                        hoveredBucket = bucket
+            .overlay {
+                GeometryReader { hoverProxy in
+                    ChartHoverTrackingView { point in
+                        guard let point else {
+                            if hoveredBucket != nil {
+                                hoveredBucket = nil
+                            }
+                            return
+                        }
+
+                        let bucket = hoveredBucket(
+                            at: point,
+                            in: proxy.size,
+                            buckets: visibleBuckets,
+                            sparseTimeline: sparseTimeline
+                        )
+                        if hoveredBucket?.id != bucket?.id {
+                            hoveredBucket = bucket
+                        }
                     }
-                case .ended:
-                    if hoveredBucket != nil {
-                        hoveredBucket = nil
-                    }
+                    .frame(width: hoverProxy.size.width, height: hoverProxy.size.height)
                 }
             }
         }
@@ -1044,7 +1131,7 @@ struct UsageTable: View {
             Text(keyFormatter(row.key))
                 .lineLimit(1)
                 .foregroundStyle(TokenMeterTheme.secondaryText)
-                .help(row.key)
+                .accessibilityValue(row.key)
                 .frame(maxWidth: .infinity, alignment: .leading)
             tokenCell(row.usage.total, width: totalColumnWidth)
             if density == .regular {

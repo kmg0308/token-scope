@@ -22,7 +22,7 @@ struct UpdateSheetView: View {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(TokenCompactIconButtonStyle())
-                .help("Close")
+                .accessibilityLabel("Close")
             }
 
             VStack(alignment: .leading, spacing: 10) {

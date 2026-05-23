@@ -120,12 +120,16 @@ final class DashboardModel: ObservableObject {
     private static let allDevicesFilterId = "all-devices"
     private static let deviceIdKey = "tokenMeter.localDeviceId"
     private static let syncFolderPathKey = "tokenMeter.syncFolderPath"
+    private static let postScrollRefreshDelayNanoseconds: UInt64 = 1_200_000_000
 
     private let defaults: UserDefaults
     private let scanner: TokenLogScanner
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
     private var scanCanDeferForScroll = false
+    private var isScrollActive = false
+    private var refreshAfterScroll = false
+    private var deferredRefreshTask: Task<Void, Never>?
     private var loadedEventWindowStart: Date?
     private var hasLoadedAllEvents = false
     private var eventRevision = 0
@@ -150,6 +154,7 @@ final class DashboardModel: ObservableObject {
     }
 
     func refresh(restartInProgress: Bool = false, fullSync: Bool = false) {
+        cancelDeferredRefresh()
         let windowStart = fullSync ? nil : scanWindowStart(for: range)
         startRefresh(
             fileModifiedAfter: windowStart,
@@ -169,6 +174,35 @@ final class DashboardModel: ObservableObject {
             replaceSyncLedger: false,
             canDeferForScroll: true
         )
+    }
+
+    func refreshRecentChangesWhenIdle() {
+        guard !isScrollActive else {
+            refreshAfterScroll = true
+            return
+        }
+        refreshRecentChanges()
+    }
+
+    func scrollActivityChanged(_ isActive: Bool) {
+        guard isScrollActive != isActive else { return }
+        isScrollActive = isActive
+
+        if isActive {
+            if deferredRefreshTask != nil {
+                refreshAfterScroll = true
+            }
+            cancelDeferredRefresh()
+            if deferInProgressRefreshForScroll() {
+                refreshAfterScroll = true
+            }
+            return
+        }
+
+        if refreshAfterScroll {
+            refreshAfterScroll = false
+            scheduleRefreshAfterScroll()
+        }
     }
 
     func deferInProgressRefreshForScroll() -> Bool {
@@ -568,6 +602,25 @@ final class DashboardModel: ObservableObject {
         }
         guard !hasLoadedAllEvents else { return }
         loadedEventWindowStart = min(loadedEventWindowStart ?? eventAfter, eventAfter)
+    }
+
+    private func scheduleRefreshAfterScroll() {
+        cancelDeferredRefresh()
+        deferredRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.postScrollRefreshDelayNanoseconds)
+            guard let self, !Task.isCancelled else { return }
+            self.deferredRefreshTask = nil
+            guard !self.isScrollActive else {
+                self.refreshAfterScroll = true
+                return
+            }
+            self.refreshRecentChanges()
+        }
+    }
+
+    private func cancelDeferredRefresh() {
+        deferredRefreshTask?.cancel()
+        deferredRefreshTask = nil
     }
 
     private func scanWindowStart(for range: TimeRangePreset) -> Date? {

@@ -127,6 +127,7 @@ struct TokenSmoothScrollView<Content: View>: NSViewRepresentable {
 }
 
 final class TokenHostingScrollView<Content: View>: NSScrollView {
+    private let scrollIdleDelay: TimeInterval = 0.35
     private let hostingView: NSHostingView<Content>
     private var lastLaidOutWidth: CGFloat = 0
     private var cachedFittingHeight: CGFloat = 1
@@ -251,7 +252,7 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
             self?.endRootUpdateDeferral()
         }
         endScrollWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + scrollIdleDelay, execute: workItem)
     }
 
     private func endRootUpdateDeferral() {

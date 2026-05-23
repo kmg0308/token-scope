@@ -8,6 +8,8 @@ struct DashboardView: View {
     @State private var showingFilters = false
     @State private var showingDetails = false
     @State private var showingSyncSettings = false
+    @State private var isScrollActive = false
+    @State private var refreshAfterScroll = false
     @AppStorage("showFullTokenNumbers") private var showFullTokenNumbers = false
 
     private let refreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
@@ -18,7 +20,7 @@ struct DashboardView: View {
                 .padding(.horizontal, 18)
                 .padding(.top, 14)
                 .padding(.bottom, 8)
-            TokenSmoothScrollView {
+            TokenSmoothScrollView(onScrollActivityChanged: handleScrollActivityChanged) {
                 VStack(alignment: .leading, spacing: 18) {
                     if updates.updateLabel != nil {
                         UpdateAvailableBanner()
@@ -68,7 +70,7 @@ struct DashboardView: View {
                 .environmentObject(updates)
         }
         .onReceive(refreshTimer) { _ in
-            model.refreshRecentChanges()
+            refreshRecentChangesWhenIdle()
         }
         .onChange(of: model.range) { _ in
             model.rangeDidChange()
@@ -652,6 +654,28 @@ struct DashboardView: View {
             return "The current section, time range, project, model, or device selection has no token events."
         }
         return "The current section, time range, project, or model selection has no token events."
+    }
+
+    private func refreshRecentChangesWhenIdle() {
+        guard !isScrollActive else {
+            refreshAfterScroll = true
+            return
+        }
+        model.refreshRecentChanges()
+    }
+
+    private func handleScrollActivityChanged(_ isActive: Bool) {
+        guard isScrollActive != isActive else { return }
+        isScrollActive = isActive
+
+        if isActive, model.deferInProgressRefreshForScroll() {
+            refreshAfterScroll = true
+        }
+
+        if !isActive, refreshAfterScroll {
+            refreshAfterScroll = false
+            model.refreshRecentChanges()
+        }
     }
 
     @ViewBuilder

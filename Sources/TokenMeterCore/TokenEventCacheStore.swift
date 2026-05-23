@@ -77,7 +77,11 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         return try? TokenEventCacheStore(databaseURL: databaseURL)
     }
 
-    func cachedEvents(for snapshot: FileSnapshot, originKind: OriginKind) throws -> CachedFile? {
+    func cachedEvents(
+        for snapshot: FileSnapshot,
+        originKind: OriginKind,
+        modifiedAfter: Date? = nil
+    ) throws -> CachedFile? {
         try locked {
             guard let metadata = try metadata(for: snapshot, originKind: originKind),
                   metadataMatches(metadata, snapshot: snapshot) else {
@@ -86,7 +90,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             if metadata.parseError {
                 return .parseError
             }
-            return .events(try eventsForOrigin(originKind: originKind, path: snapshot.path))
+            return .events(try eventsForOrigin(originKind: originKind, path: snapshot.path, modifiedAfter: modifiedAfter))
         }
     }
 
@@ -191,6 +195,29 @@ public final class TokenEventCacheStore: @unchecked Sendable {
                     for event in events {
                         try insertEvent(event, originKind: originKind, originPath: snapshot.path)
                     }
+                }
+            }
+        }
+    }
+
+    func appendEvents(
+        _ events: [TokenEvent],
+        for snapshot: FileSnapshot,
+        originKind: OriginKind
+    ) throws {
+        guard !events.isEmpty else { return }
+
+        try locked {
+            try transaction {
+                let existingCount = try eventCount(originKind: originKind, path: snapshot.path)
+                try upsertOriginFile(
+                    snapshot: snapshot,
+                    originKind: originKind,
+                    parseError: false,
+                    eventCount: existingCount + events.count
+                )
+                for event in events {
+                    try insertEvent(event, originKind: originKind, originPath: snapshot.path)
                 }
             }
         }
@@ -317,20 +344,36 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             && metadata.deviceId == snapshot.deviceId
     }
 
-    private func eventsForOrigin(originKind: OriginKind, path: String) throws -> [TokenEvent] {
-        var statement: OpaquePointer?
-        try prepare(
-            """
+    private func eventsForOrigin(
+        originKind: OriginKind,
+        path: String,
+        modifiedAfter: Date? = nil
+    ) throws -> [TokenEvent] {
+        let sql: String
+        if modifiedAfter == nil {
+            sql = """
             SELECT event_json
             FROM event_records
             WHERE origin_kind = ? AND origin_path = ?
             ORDER BY timestamp ASC, event_id ASC
-            """,
-            into: &statement
-        )
+            """
+        } else {
+            sql = """
+            SELECT event_json
+            FROM event_records
+            WHERE origin_kind = ? AND origin_path = ? AND timestamp >= ?
+            ORDER BY timestamp ASC, event_id ASC
+            """
+        }
+
+        var statement: OpaquePointer?
+        try prepare(sql, into: &statement)
         defer { sqlite3_finalize(statement) }
         bind(originKind.rawValue, to: statement, at: 1)
         bind(path, to: statement, at: 2)
+        if let modifiedAfter {
+            sqlite3_bind_double(statement, 3, modifiedAfter.timeIntervalSince1970)
+        }
 
         var events: [TokenEvent] = []
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -371,6 +414,37 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         try prepare(
             """
             INSERT INTO origin_files (
+                origin_kind, origin_path, source, file_size, modified_at,
+                parser_version, device_id, parse_error, event_count,
+                first_event_at, last_event_at, scanned_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+            """,
+            into: &statement
+        )
+        defer { sqlite3_finalize(statement) }
+        bind(originKind.rawValue, to: statement, at: 1)
+        bind(snapshot.path, to: statement, at: 2)
+        bind(snapshot.source?.rawValue, to: statement, at: 3)
+        sqlite3_bind_int64(statement, 4, snapshot.size)
+        sqlite3_bind_double(statement, 5, snapshot.modifiedAt.timeIntervalSince1970)
+        sqlite3_bind_int(statement, 6, Int32(Self.parserVersion))
+        bind(snapshot.deviceId, to: statement, at: 7)
+        sqlite3_bind_int(statement, 8, parseError ? 1 : 0)
+        sqlite3_bind_int(statement, 9, Int32(eventCount))
+        sqlite3_bind_double(statement, 10, Date().timeIntervalSince1970)
+        try stepDone(statement)
+    }
+
+    private func upsertOriginFile(
+        snapshot: FileSnapshot,
+        originKind: OriginKind,
+        parseError: Bool,
+        eventCount: Int
+    ) throws {
+        var statement: OpaquePointer?
+        try prepare(
+            """
+            INSERT OR REPLACE INTO origin_files (
                 origin_kind, origin_path, source, file_size, modified_at,
                 parser_version, device_id, parse_error, event_count,
                 first_event_at, last_event_at, scanned_at
@@ -440,6 +514,22 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         bind(originKind.rawValue, to: statement, at: 1)
         bind(path, to: statement, at: 2)
         try stepDone(statement)
+    }
+
+    private func eventCount(originKind: OriginKind, path: String) throws -> Int {
+        var statement: OpaquePointer?
+        try prepare(
+            "SELECT COUNT(*) FROM event_records WHERE origin_kind = ? AND origin_path = ?",
+            into: &statement
+        )
+        defer { sqlite3_finalize(statement) }
+        bind(originKind.rawValue, to: statement, at: 1)
+        bind(path, to: statement, at: 2)
+
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            return 0
+        }
+        return Int(sqlite3_column_int(statement, 0))
     }
 
     private func transaction(_ body: () throws -> Void) throws {

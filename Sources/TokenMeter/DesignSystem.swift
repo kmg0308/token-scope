@@ -104,16 +104,24 @@ struct TokenControlChrome: View {
 
 struct TokenSmoothScrollView<Content: View>: NSViewRepresentable {
     private let content: Content
+    private let onScrollActivityChanged: (Bool) -> Void
 
-    init(@ViewBuilder content: () -> Content) {
+    init(
+        onScrollActivityChanged: @escaping (Bool) -> Void = { _ in },
+        @ViewBuilder content: () -> Content
+    ) {
+        self.onScrollActivityChanged = onScrollActivityChanged
         self.content = content()
     }
 
     func makeNSView(context: Context) -> TokenHostingScrollView<Content> {
-        TokenHostingScrollView(rootView: content)
+        let scrollView = TokenHostingScrollView(rootView: content)
+        scrollView.onScrollActivityChanged = onScrollActivityChanged
+        return scrollView
     }
 
     func updateNSView(_ scrollView: TokenHostingScrollView<Content>, context: Context) {
+        scrollView.onScrollActivityChanged = onScrollActivityChanged
         scrollView.updateRootView(content)
     }
 }
@@ -126,6 +134,8 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
     private var isDeferringRootUpdates = false
     private var pendingRootView: Content?
     private var endScrollWorkItem: DispatchWorkItem?
+
+    var onScrollActivityChanged: ((Bool) -> Void)?
 
     var rootView: Content {
         get { hostingView.rootView }
@@ -226,9 +236,12 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
     }
 
     private func beginRootUpdateDeferral() {
-        isDeferringRootUpdates = true
         endScrollWorkItem?.cancel()
         endScrollWorkItem = nil
+
+        guard !isDeferringRootUpdates else { return }
+        isDeferringRootUpdates = true
+        onScrollActivityChanged?(true)
     }
 
     private func scheduleRootUpdateDeferralEnd() {
@@ -244,7 +257,10 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
     private func endRootUpdateDeferral() {
         endScrollWorkItem?.cancel()
         endScrollWorkItem = nil
+
+        guard isDeferringRootUpdates else { return }
         isDeferringRootUpdates = false
+        onScrollActivityChanged?(false)
 
         guard let pendingRootView else { return }
         self.pendingRootView = nil

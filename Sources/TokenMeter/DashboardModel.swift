@@ -125,6 +125,7 @@ final class DashboardModel: ObservableObject {
     private let scanner: TokenLogScanner
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
+    private var scanCanDeferForScroll = false
     private var loadedEventWindowStart: Date?
     private var hasLoadedAllEvents = false
     private var eventRevision = 0
@@ -154,7 +155,8 @@ final class DashboardModel: ObservableObject {
             fileModifiedAfter: windowStart,
             eventAfter: windowStart,
             restartInProgress: restartInProgress,
-            replaceSyncLedger: fullSync
+            replaceSyncLedger: fullSync,
+            canDeferForScroll: false
         )
     }
 
@@ -164,8 +166,19 @@ final class DashboardModel: ObservableObject {
             fileModifiedAfter: recentScanWindowStart(),
             eventAfter: eventAfter,
             restartInProgress: false,
-            replaceSyncLedger: false
+            replaceSyncLedger: false,
+            canDeferForScroll: true
         )
+    }
+
+    func deferInProgressRefreshForScroll() -> Bool {
+        guard isScanning, scanCanDeferForScroll else { return false }
+        scanTask?.cancel()
+        scanTask = nil
+        scanGeneration += 1
+        scanCanDeferForScroll = false
+        isScanning = false
+        return true
     }
 
     func rangeDidChange() {
@@ -179,7 +192,8 @@ final class DashboardModel: ObservableObject {
         fileModifiedAfter: Date?,
         eventAfter: Date?,
         restartInProgress: Bool,
-        replaceSyncLedger: Bool
+        replaceSyncLedger: Bool,
+        canDeferForScroll: Bool
     ) {
         if isScanning {
             guard restartInProgress else { return }
@@ -190,11 +204,12 @@ final class DashboardModel: ObservableObject {
         let generation = scanGeneration
         let scanner = scanner
         isScanning = true
+        scanCanDeferForScroll = canDeferForScroll
         errorMessage = nil
         let syncFolderURL = syncFolderURL
 
-        scanTask = Task { @MainActor [weak self] in
-            let worker = Task.detached(priority: .utility) {
+        scanTask = Task(priority: .background) { @MainActor [weak self] in
+            let worker = Task.detached(priority: .background) {
                 scanner.scan(
                     modifiedAfter: fileModifiedAfter,
                     eventAfter: eventAfter,
@@ -214,6 +229,7 @@ final class DashboardModel: ObservableObject {
             markLoadedWindow(eventAfter: eventAfter)
             normalizeFilters()
             isScanning = false
+            scanCanDeferForScroll = false
             scanTask = nil
         }
     }

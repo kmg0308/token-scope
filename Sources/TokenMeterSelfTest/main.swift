@@ -18,6 +18,8 @@ enum TokenMeterSelfTest {
         try syncFolderAppendsOnlyNewLocalEvents()
         try syncFolderImportsOnlyRequestedWindow()
         try syncFolderReusesCachedDeviceLedgers()
+        try syncFolderFiltersCachedDeviceLedgersByRequestedWindow()
+        try syncFolderAppendsCachedDeviceLedgerIncrementally()
         if CommandLine.arguments.contains("--real-scan") {
             runRealScanSmokeTest()
         }
@@ -465,6 +467,99 @@ enum TokenMeterSelfTest {
         let unchanged = store.synchronize(localEvents: [])
         try expect(unchanged.events.map(\.id) == ["event-a"], "unchanged sync ledger uses cached records")
         try expect(unchanged.status.parseErrorCount == 0, "unchanged sync ledger avoids parse errors")
+    }
+
+    private static func syncFolderFiltersCachedDeviceLedgersByRequestedWindow() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let cache = try temporaryCache(in: directory)
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let store = TokenSyncLedgerStore(folder: syncFolder, localDevice: device, cacheStore: cache)
+        let oldEvent = TokenEvent(
+            id: "old",
+            source: .claude,
+            timestamp: isoDate("2026-01-01T00:00:00.000Z"),
+            deviceId: device.id,
+            deviceName: device.name,
+            usage: TokenUsage(total: 10),
+            rawFilePath: "/tmp/old.jsonl"
+        )
+        let recentEvent = TokenEvent(
+            id: "recent",
+            source: .claude,
+            timestamp: isoDate("2026-01-02T00:00:00.000Z"),
+            deviceId: device.id,
+            deviceName: device.name,
+            usage: TokenUsage(total: 20),
+            rawFilePath: "/tmp/recent.jsonl"
+        )
+
+        _ = store.synchronize(localEvents: [oldEvent, recentEvent], replaceLocalLedger: true)
+        let ledgerURL = syncFolder
+            .appendingPathComponent("devices", isDirectory: true)
+            .appendingPathComponent("\(device.id).jsonl")
+        let cachedDate = isoDate("2026-01-02T00:10:00.000Z")
+        try setModificationDate(cachedDate, for: ledgerURL)
+
+        let cached = store.synchronize(localEvents: [])
+        try expect(cached.events.map(\.id) == ["old", "recent"], "sync ledger warms timestamped cache")
+
+        try overwriteWithInvalidContentPreservingSizeAndDate(url: ledgerURL, date: cachedDate)
+        let windowed = store.synchronize(
+            localEvents: [],
+            importedAfter: isoDate("2026-01-01T12:00:00.000Z")
+        )
+        try expect(windowed.events.map(\.id) == ["recent"], "cached sync import filters old records")
+        try expect(windowed.status.parseErrorCount == 0, "windowed cached sync avoids reparse errors")
+    }
+
+    private static func syncFolderAppendsCachedDeviceLedgerIncrementally() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let cache = try temporaryCache(in: directory)
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let store = TokenSyncLedgerStore(folder: syncFolder, localDevice: device, cacheStore: cache)
+        let firstEvent = TokenEvent(
+            id: "first",
+            source: .claude,
+            timestamp: isoDate("2026-01-01T00:00:00.000Z"),
+            deviceId: device.id,
+            deviceName: device.name,
+            usage: TokenUsage(total: 10),
+            rawFilePath: "/tmp/first.jsonl"
+        )
+        let secondEvent = TokenEvent(
+            id: "second",
+            source: .claude,
+            timestamp: isoDate("2026-01-01T00:01:00.000Z"),
+            deviceId: device.id,
+            deviceName: device.name,
+            usage: TokenUsage(total: 20),
+            rawFilePath: "/tmp/second.jsonl"
+        )
+
+        _ = store.synchronize(localEvents: [firstEvent], replaceLocalLedger: true)
+        let ledgerURL = syncFolder
+            .appendingPathComponent("devices", isDirectory: true)
+            .appendingPathComponent("\(device.id).jsonl")
+        let cachedDate = isoDate("2026-01-01T00:10:00.000Z")
+        try setModificationDate(cachedDate, for: ledgerURL)
+        _ = store.synchronize(localEvents: [])
+
+        let updated = store.synchronize(localEvents: [firstEvent, secondEvent])
+        try expect(updated.status.exportedEventCount == 1, "cached sync append exports only new event")
+
+        let appendedDate = try FileManager.default.attributesOfItem(atPath: ledgerURL.path)[.modificationDate] as? Date
+        try overwriteWithInvalidContentPreservingSizeAndDate(url: ledgerURL, date: appendedDate ?? Date())
+        let cached = store.synchronize(localEvents: [])
+        try expect(cached.events.map(\.id) == ["first", "second"], "cached sync append keeps prior events")
+        try expect(cached.status.parseErrorCount == 0, "cached sync append avoids full reparse")
     }
 
     private static func temporaryFile(_ content: String) -> URL {

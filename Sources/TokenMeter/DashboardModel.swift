@@ -106,7 +106,9 @@ final class DashboardModel: ObservableObject {
         let device = Self.loadLocalDevice(defaults: defaults)
         self.localDevice = device
         self.scanner = TokenLogScanner(localDevice: device)
-        self.syncFolderPath = defaults.string(forKey: Self.syncFolderPathKey)
+        let storedSyncFolderPath = defaults.string(forKey: Self.syncFolderPathKey)
+        self.syncFolderPath = storedSyncFolderPath
+        self.deviceFilter = storedSyncFolderPath?.isEmpty == false ? Self.allDevicesFilterId : device.id
         refresh()
     }
 
@@ -157,8 +159,9 @@ final class DashboardModel: ObservableObject {
         if !modelOptions.contains(modelFilter) {
             modelFilter = "All Models"
         }
-        if !deviceOptions.contains(where: { $0.id == deviceFilter }) {
-            deviceFilter = Self.allDevicesFilterId
+        let availableDeviceOptions = deviceOptions
+        if !availableDeviceOptions.contains(where: { $0.id == deviceFilter }) {
+            deviceFilter = availableDeviceOptions.first?.id ?? Self.allDevicesFilterId
         }
     }
 
@@ -169,6 +172,10 @@ final class DashboardModel: ObservableObject {
     var syncFolderURL: URL? {
         guard let syncFolderPath, !syncFolderPath.isEmpty else { return nil }
         return URL(fileURLWithPath: syncFolderPath)
+    }
+
+    var isSyncConfigured: Bool {
+        syncFolderURL != nil
     }
 
     var defaultICloudSyncFolderURL: URL? {
@@ -185,10 +192,16 @@ final class DashboardModel: ObservableObject {
     }
 
     var selectedDeviceTitle: String {
-        deviceOptions.first { $0.id == deviceFilter }?.title ?? "All Devices"
+        deviceOptions.first { $0.id == deviceFilter }?.title ?? deviceOptions.first?.title ?? "This Mac"
     }
 
     var deviceOptions: [DashboardDeviceOption] {
+        guard isSyncConfigured else {
+            return [
+                DashboardDeviceOption(id: localDevice.id, title: "This Mac", deviceId: localDevice.id)
+            ]
+        }
+
         var options = [
             DashboardDeviceOption(id: Self.allDevicesFilterId, title: "All Devices", deviceId: nil),
             DashboardDeviceOption(id: localDevice.id, title: "This Mac", deviceId: localDevice.id)
@@ -231,7 +244,7 @@ final class DashboardModel: ObservableObject {
     func clearSyncFolder() {
         defaults.removeObject(forKey: Self.syncFolderPathKey)
         syncFolderPath = nil
-        deviceFilter = Self.allDevicesFilterId
+        deviceFilter = localDevice.id
         refresh(restartInProgress: true)
     }
 

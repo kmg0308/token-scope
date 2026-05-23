@@ -13,6 +13,8 @@ enum TokenMeterSelfTest {
         try dashboardBucketOptionsStayReadable()
         try scannerIncludesAllRecentClaudeFiles()
         try syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents()
+        try syncFolderAppendsOnlyNewLocalEvents()
+        try syncFolderImportsOnlyRequestedWindow()
         if CommandLine.arguments.contains("--real-scan") {
             runRealScanSmokeTest()
         }
@@ -242,6 +244,91 @@ enum TokenMeterSelfTest {
         try expect(!ledgerText.contains(".claude"), "sync ledger omits raw log paths")
     }
 
+    private static func syncFolderAppendsOnlyNewLocalEvents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let scanner = TokenLogScanner(homeDirectory: home, localDevice: device)
+
+        try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "a.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-a",
+            input: 10
+        )
+
+        let first = scanner.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(first.syncStatus.exportedEventCount == 1, "initial sync exports one record")
+        try expect(try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 1, "initial ledger line count")
+
+        let unchanged = scanner.scan(syncFolder: syncFolder)
+        try expect(unchanged.syncStatus.exportedEventCount == 0, "unchanged sync appends nothing")
+        try expect(try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 1, "unchanged ledger line count")
+
+        try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "b.jsonl",
+            timestamp: "2026-01-01T00:01:00.000Z",
+            cwd: "/tmp/project-b",
+            sessionId: "session-b",
+            requestId: "request-b",
+            input: 5
+        )
+
+        let updated = scanner.scan(syncFolder: syncFolder)
+        try expect(updated.syncStatus.exportedEventCount == 1, "second sync exports only new record")
+        try expect(try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 2, "updated ledger line count")
+        try expect(Aggregation.totalUsage(events: updated.events).total == 15, "updated sync total")
+
+        let repeated = scanner.scan(syncFolder: syncFolder)
+        try expect(repeated.syncStatus.exportedEventCount == 0, "repeated sync appends nothing")
+        try expect(try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 2, "repeated ledger line count")
+    }
+
+    private static func syncFolderImportsOnlyRequestedWindow() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let store = TokenSyncLedgerStore(folder: syncFolder, localDevice: device)
+        let oldEvent = TokenEvent(
+            id: "old",
+            source: .claude,
+            timestamp: isoDate("2026-01-01T00:00:00.000Z"),
+            deviceId: device.id,
+            deviceName: device.name,
+            usage: TokenUsage(total: 10),
+            rawFilePath: "/tmp/old.jsonl"
+        )
+        let recentEvent = TokenEvent(
+            id: "recent",
+            source: .claude,
+            timestamp: isoDate("2026-01-02T00:00:00.000Z"),
+            deviceId: device.id,
+            deviceName: device.name,
+            usage: TokenUsage(total: 20),
+            rawFilePath: "/tmp/recent.jsonl"
+        )
+
+        _ = store.synchronize(localEvents: [oldEvent, recentEvent], replaceLocalLedger: true)
+
+        let windowed = store.synchronize(
+            localEvents: [],
+            importedAfter: isoDate("2026-01-01T12:00:00.000Z")
+        )
+        try expect(windowed.events.map(\.id) == ["recent"], "sync import filters old records")
+        try expect(windowed.status.importedEventCount == 1, "sync import status counts windowed records")
+    }
+
     private static func temporaryFile(_ content: String) -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -281,6 +368,20 @@ enum TokenMeterSelfTest {
             .filter { $0.pathExtension == "jsonl" }
             .map { try String(contentsOf: $0, encoding: .utf8) }
             .joined(separator: "\n")
+    }
+
+    private static func syncLedgerLineCount(syncFolder: URL, deviceId: String) throws -> Int {
+        let url = syncFolder
+            .appendingPathComponent("devices", isDirectory: true)
+            .appendingPathComponent("\(deviceId).jsonl")
+        let content = try String(contentsOf: url, encoding: .utf8)
+        return content.split(separator: "\n", omittingEmptySubsequences: true).count
+    }
+
+    private static func isoDate(_ value: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value)!
     }
 
     private static func date(year: Int, month: Int, day: Int, hour: Int, minute: Int, calendar: Calendar) -> Date {

@@ -15,6 +15,7 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
     public func synchronize(
         localEvents: [TokenEvent],
         replaceLocalLedger: Bool = false,
+        importedAfter: Date? = nil,
         isCancelled: () -> Bool = { false }
     ) -> (events: [TokenEvent], status: SyncFolderStatus) {
         guard fileManager.fileExists(atPath: folder.path) else {
@@ -37,7 +38,7 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             exportError = error.localizedDescription
         }
 
-        let readResult = readDeviceLedgers(isCancelled: isCancelled)
+        let readResult = readDeviceLedgers(importedAfter: importedAfter, isCancelled: isCancelled)
         let status = SyncFolderStatus(
             path: folder.path,
             exists: true,
@@ -63,35 +64,83 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         let localLedgerURL = devicesURL.appendingPathComponent("\(safeFileName(localDevice.id)).jsonl")
 
         var recordsByKey: [String: SyncLedgerRecord] = [:]
-        if !replaceExisting, fileManager.fileExists(atPath: localLedgerURL.path) {
-            let existing = readRecords(from: localLedgerURL, isCancelled: isCancelled).records
-            for record in existing {
-                recordsByKey[record.identityKey] = record
-            }
-        }
-
         for event in events where !isCancelled() {
             let record = SyncLedgerRecord(event: event.withDevice(localDevice))
             recordsByKey[record.identityKey] = record
         }
 
-        let records = recordsByKey.values.sorted {
+        let records: [SyncLedgerRecord]
+        if replaceExisting {
+            records = sortedRecords(Array(recordsByKey.values))
+            try write(records: records, to: localLedgerURL)
+            return records.count
+        }
+
+        let existingKeys = readIdentityKeys(from: localLedgerURL, isCancelled: isCancelled)
+        records = sortedRecords(recordsByKey.values.filter { !existingKeys.contains($0.identityKey) })
+        guard !records.isEmpty else { return 0 }
+
+        try append(records: records, to: localLedgerURL)
+        return records.count
+    }
+
+    private func sortedRecords(_ records: [SyncLedgerRecord]) -> [SyncLedgerRecord] {
+        records.sorted {
             if $0.timestamp == $1.timestamp {
                 return $0.eventId < $1.eventId
             }
             return $0.timestamp < $1.timestamp
         }
+    }
+
+    private func write(records: [SyncLedgerRecord], to url: URL) throws {
         let encoder = Self.jsonEncoder
         let lines = try records.map { record in
             let data = try encoder.encode(record)
             return String(decoding: data, as: UTF8.self)
         }
         let data = (lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")).data(using: .utf8) ?? Data()
-        try data.write(to: localLedgerURL, options: [.atomic])
-        return events.count
+        try data.write(to: url, options: [.atomic])
     }
 
-    private func readDeviceLedgers(isCancelled: () -> Bool) -> (events: [TokenEvent], deviceFileCount: Int, parseErrorCount: Int) {
+    private func append(records: [SyncLedgerRecord], to url: URL) throws {
+        let encoder = Self.jsonEncoder
+        let lines = try records.map { record in
+            let data = try encoder.encode(record)
+            return String(decoding: data, as: UTF8.self)
+        }
+        guard !lines.isEmpty else { return }
+
+        if !fileManager.fileExists(atPath: url.path) {
+            let data = (lines.joined(separator: "\n") + "\n").data(using: .utf8) ?? Data()
+            try data.write(to: url, options: [.atomic])
+            return
+        }
+
+        let handle = try FileHandle(forUpdating: url)
+        defer {
+            try? handle.close()
+        }
+
+        let endOffset = try handle.seekToEnd()
+        if endOffset > 0 {
+            try handle.seek(toOffset: endOffset - 1)
+            let lastByte = handle.readDataToEndOfFile()
+            if lastByte != Data([0x0A]) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data([0x0A]))
+            }
+        }
+
+        try handle.seekToEnd()
+        let data = (lines.joined(separator: "\n") + "\n").data(using: .utf8) ?? Data()
+        try handle.write(contentsOf: data)
+    }
+
+    private func readDeviceLedgers(
+        importedAfter: Date?,
+        isCancelled: () -> Bool
+    ) -> (events: [TokenEvent], deviceFileCount: Int, parseErrorCount: Int) {
         let devicesURL = folder.appendingPathComponent("devices", isDirectory: true)
         guard fileManager.fileExists(atPath: devicesURL.path) else {
             return ([], 0, 0)
@@ -111,7 +160,7 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
 
         for case let url as URL in enumerator where !isCancelled() && url.pathExtension == "jsonl" {
             fileCount += 1
-            let result = readRecords(from: url, isCancelled: isCancelled)
+            let result = readRecords(from: url, importedAfter: importedAfter, isCancelled: isCancelled)
             parseErrors += result.parseErrorCount
             events.append(contentsOf: result.records.map(\.tokenEvent))
         }
@@ -119,7 +168,27 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         return (events, fileCount, parseErrors)
     }
 
-    private func readRecords(from url: URL, isCancelled: () -> Bool) -> (records: [SyncLedgerRecord], parseErrorCount: Int) {
+    private func readIdentityKeys(from url: URL, isCancelled: () -> Bool) -> Set<String> {
+        guard fileManager.fileExists(atPath: url.path) else { return [] }
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+
+        let decoder = Self.jsonDecoder
+        var keys: Set<String> = []
+        for line in content.split(separator: "\n", omittingEmptySubsequences: true) where !isCancelled() {
+            guard let data = String(line).data(using: .utf8),
+                  let identity = try? decoder.decode(SyncLedgerIdentity.self, from: data) else {
+                continue
+            }
+            keys.insert(identity.identityKey)
+        }
+        return keys
+    }
+
+    private func readRecords(
+        from url: URL,
+        importedAfter: Date?,
+        isCancelled: () -> Bool
+    ) -> (records: [SyncLedgerRecord], parseErrorCount: Int) {
         guard let content = try? String(contentsOf: url, encoding: .utf8) else {
             return ([], 1)
         }
@@ -135,6 +204,10 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             }
 
             do {
+                if let importedAfter {
+                    let header = try decoder.decode(SyncLedgerRecordHeader.self, from: data)
+                    guard header.timestamp >= importedAfter else { continue }
+                }
                 let record = try decoder.decode(SyncLedgerRecord.self, from: data)
                 records.append(record)
             } catch {
@@ -192,6 +265,24 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.date(from: value)
     }
+}
+
+private struct SyncLedgerIdentity: Decodable {
+    var deviceId: String
+    var eventId: String
+
+    var identityKey: String {
+        "\(deviceId)|\(eventId)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case eventId = "event_id"
+    }
+}
+
+private struct SyncLedgerRecordHeader: Decodable {
+    var timestamp: Date
 }
 
 private struct SyncLedgerRecord: Codable, Hashable {

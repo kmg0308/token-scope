@@ -74,6 +74,7 @@ public final class TokenLogScanner: @unchecked Sendable {
             localEvents: localEvents,
             syncFolder: syncFolder,
             replaceSyncLedger: replaceSyncLedger,
+            importedAfter: modifiedAfter,
             isCancelled: isCancelled
         )
         let events = deduplicated(events: localEvents + syncOutcome.events)
@@ -200,6 +201,7 @@ public final class TokenLogScanner: @unchecked Sendable {
         localEvents: [TokenEvent],
         syncFolder: URL?,
         replaceSyncLedger: Bool,
+        importedAfter: Date?,
         isCancelled: () -> Bool
     ) -> (events: [TokenEvent], status: SyncFolderStatus) {
         guard let syncFolder else {
@@ -214,6 +216,7 @@ public final class TokenLogScanner: @unchecked Sendable {
         return store.synchronize(
             localEvents: localEvents,
             replaceLocalLedger: replaceSyncLedger,
+            importedAfter: importedAfter,
             isCancelled: isCancelled
         )
     }

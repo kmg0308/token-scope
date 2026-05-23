@@ -7,6 +7,7 @@ struct DashboardView: View {
     @EnvironmentObject private var updates: UpdateModel
     @State private var showingFilters = false
     @State private var showingDetails = false
+    @State private var showingSyncSettings = false
     @AppStorage("showFullTokenNumbers") private var showFullTokenNumbers = false
 
     private let refreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
@@ -43,7 +44,7 @@ struct DashboardView: View {
                             .padding(.top, 10)
                     }
 
-                    syncFolderBlock
+                    syncSettingsSection
 
                     dataSourcesBlock
 
@@ -142,15 +143,17 @@ struct DashboardView: View {
     }
 
     private var headerSubtitle: String {
-        let deviceScope = model.selectedDeviceTitle
+        let sectionTitle: String
         switch model.selectedSection {
         case .all:
-            return "Combined usage - \(deviceScope)"
+            sectionTitle = "Combined usage"
         case .codex:
-            return "Codex sessions - \(deviceScope)"
+            sectionTitle = "Codex sessions"
         case .claude:
-            return "Claude Code sessions - \(deviceScope)"
+            sectionTitle = "Claude Code sessions"
         }
+        guard model.isSyncConfigured else { return sectionTitle }
+        return "\(sectionTitle) - \(model.selectedDeviceTitle)"
     }
 
     private var numberFormat: TokenNumberFormat {
@@ -175,7 +178,9 @@ struct DashboardView: View {
                         .fill(TokenMeterTheme.control)
                 }
 
-                devicePicker
+                if model.isSyncConfigured {
+                    devicePicker
+                }
 
                 Spacer()
 
@@ -545,7 +550,9 @@ struct DashboardView: View {
             footerItem("Codex files", model.scanResult.codexFileCount)
             footerItem("Claude files", model.scanResult.claudeFileCount)
             footerItem("Events", model.scanResult.events.count)
-            footerItem("Devices", Set(model.scanResult.events.map(\.deviceId)).count)
+            if model.isSyncConfigured {
+                footerItem("Devices", Set(model.scanResult.events.map(\.deviceId)).count)
+            }
             footerItem("Errors", model.scanResult.parseErrorCount)
             Spacer()
             Text("Scanned \(model.scanResult.scannedAt.formatted(date: .omitted, time: .shortened))")
@@ -611,7 +618,7 @@ struct DashboardView: View {
             return DashboardNotice(
                 icon: "line.3.horizontal.decrease.circle",
                 title: "No matching events",
-                message: "The current section, time range, project, or model selection has no token events.",
+                message: noMatchingEventsMessage,
                 tint: TokenMeterTheme.secondaryText
             )
         }
@@ -644,6 +651,25 @@ struct DashboardView: View {
         }
 
         return nil
+    }
+
+    private var noMatchingEventsMessage: String {
+        if model.isSyncConfigured {
+            return "The current section, time range, project, model, or device selection has no token events."
+        }
+        return "The current section, time range, project, or model selection has no token events."
+    }
+
+    @ViewBuilder
+    private var syncSettingsSection: some View {
+        if model.isSyncConfigured {
+            syncFolderBlock
+        } else {
+            CollapsibleSection("Sync Folder", isExpanded: $showingSyncSettings) {
+                syncFolderBlock
+                    .padding(.top, 8)
+            }
+        }
     }
 
     private func chooseSyncFolder() {

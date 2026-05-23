@@ -37,7 +37,7 @@ public final class TokenLogScanner: @unchecked Sendable {
             for file in files {
                 guard !isCancelled() else { break }
                 let result = cachedOrParsedEvents(for: file, isCancelled: isCancelled) {
-                    try TokenLogParser.parseCodexFile(at: file.url, isCancelled: isCancelled)
+                    try TokenLogParser.parseCodexFile(at: file.url, startOffset: $0, isCancelled: isCancelled)
                 }
                 switch result {
                 case .success(let events):
@@ -56,7 +56,7 @@ public final class TokenLogScanner: @unchecked Sendable {
             for file in files {
                 guard !isCancelled() else { break }
                 let result = cachedOrParsedEvents(for: file, isCancelled: isCancelled) {
-                    try TokenLogParser.parseClaudeFile(at: file.url, isCancelled: isCancelled)
+                    try TokenLogParser.parseClaudeFile(at: file.url, startOffset: $0, isCancelled: isCancelled)
                 }
                 switch result {
                 case .success(let events):
@@ -101,6 +101,16 @@ public final class TokenLogScanner: @unchecked Sendable {
             syncStatus: syncOutcome.status,
             scannedAt: Date()
         )
+    }
+
+    public func cachedResult(eventAfter: Date? = nil, syncFolder: URL? = nil) -> ScanResult? {
+        guard let events = cachedEvents(modifiedAfter: eventAfter), !events.isEmpty else {
+            return nil
+        }
+        let syncStatus = syncFolder.map {
+            SyncFolderStatus(path: $0.path, exists: fileManager.fileExists(atPath: $0.path))
+        } ?? .disabled
+        return ScanResult(events: events, syncStatus: syncStatus, scannedAt: Date())
     }
 
     public func findCodexFiles() -> [URL] {
@@ -268,7 +278,7 @@ public final class TokenLogScanner: @unchecked Sendable {
     private func cachedOrParsedEvents(
         for file: LogFile,
         isCancelled: () -> Bool,
-        parse: () throws -> [TokenEvent]
+        parse: (Int64) throws -> [TokenEvent]
     ) -> FileEventResult {
         let snapshot = file.cacheSnapshot(for: localDevice)
         if let cached = try? cacheStore?.cachedEvents(for: snapshot, originKind: .localLog) {
@@ -280,8 +290,12 @@ public final class TokenLogScanner: @unchecked Sendable {
             }
         }
 
+        if let appended = appendCachedEventsIfPossible(for: snapshot, isCancelled: isCancelled, parse: parse) {
+            return appended
+        }
+
         do {
-            let events = try parse().map { $0.withDevice(localDevice) }
+            let events = try parse(0).map { $0.withDevice(localDevice) }
             if !isCancelled() {
                 try? cacheStore?.replaceEvents(events, for: snapshot, originKind: .localLog)
             }
@@ -291,6 +305,39 @@ public final class TokenLogScanner: @unchecked Sendable {
                 try? cacheStore?.replaceEvents([], for: snapshot, originKind: .localLog, parseError: true)
             }
             return .failure
+        }
+    }
+
+    private func appendCachedEventsIfPossible(
+        for snapshot: TokenEventCacheStore.FileSnapshot,
+        isCancelled: () -> Bool,
+        parse: (Int64) throws -> [TokenEvent]
+    ) -> FileEventResult? {
+        guard let cacheStore,
+              let base = try? cacheStore.incrementalAppendBase(for: snapshot, originKind: .localLog) else {
+            return nil
+        }
+
+        let baseSnapshot = TokenEventCacheStore.FileSnapshot(
+            path: snapshot.path,
+            source: snapshot.source,
+            size: base.size,
+            modifiedAt: base.modifiedAt,
+            deviceId: snapshot.deviceId
+        )
+        guard case .events(let cachedEvents) = try? cacheStore.cachedEvents(for: baseSnapshot, originKind: .localLog) else {
+            return nil
+        }
+
+        do {
+            let newEvents = try parse(base.size).map { $0.withDevice(localDevice) }
+            guard !isCancelled() else { return .success(cachedEvents) }
+            try? cacheStore.appendEvents(newEvents, for: snapshot, originKind: .localLog)
+            return .success(cachedEvents + newEvents)
+        } catch TokenLogParser.IncrementalParseError.requiresFullFile {
+            return nil
+        } catch {
+            return nil
         }
     }
 

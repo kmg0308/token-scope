@@ -2,7 +2,15 @@ import CryptoKit
 import Foundation
 
 public enum TokenLogParser {
-    public static func parseCodexFile(at url: URL, isCancelled: () -> Bool = { false }) throws -> [TokenEvent] {
+    enum IncrementalParseError: Error {
+        case requiresFullFile
+    }
+
+    public static func parseCodexFile(
+        at url: URL,
+        startOffset: Int64 = 0,
+        isCancelled: () -> Bool = { false }
+    ) throws -> [TokenEvent] {
         var events: [TokenEvent] = []
         var projectPath = "Unknown"
         var model = "Unknown"
@@ -10,7 +18,7 @@ public enum TokenLogParser {
         let sessionId = sessionIdFromFileName(url.lastPathComponent)
         let dateParser = DateParser()
 
-        try forEachJSONLine(in: url, isCancelled: isCancelled) { index, object in
+        try forEachJSONLine(in: url, startOffset: startOffset, isCancelled: isCancelled) { index, object in
             guard let payload = object["payload"] as? [String: Any] else { return }
 
             if let cwd = payload["cwd"] as? String, !cwd.isEmpty {
@@ -36,6 +44,9 @@ public enum TokenLogParser {
                 } else if let lastDict {
                     usage = codexUsage(from: lastDict)
                 } else {
+                    if startOffset > 0 {
+                        throw IncrementalParseError.requiresFullFile
+                    }
                     usage = currentTotal
                 }
                 previousTotal = currentTotal
@@ -62,12 +73,16 @@ public enum TokenLogParser {
         return events
     }
 
-    public static func parseClaudeFile(at url: URL, isCancelled: () -> Bool = { false }) throws -> [TokenEvent] {
+    public static func parseClaudeFile(
+        at url: URL,
+        startOffset: Int64 = 0,
+        isCancelled: () -> Bool = { false }
+    ) throws -> [TokenEvent] {
         var events: [TokenEvent] = []
         var seenRequests = Set<String>()
         let dateParser = DateParser()
 
-        try forEachJSONLine(in: url, isCancelled: isCancelled) { index, object in
+        try forEachJSONLine(in: url, startOffset: startOffset, isCancelled: isCancelled) { index, object in
             guard let message = object["message"] as? [String: Any],
                   let usageDict = message["usage"] as? [String: Any] else { return }
 
@@ -130,24 +145,26 @@ public enum TokenLogParser {
 
     private static func forEachJSONLine(
         in url: URL,
+        startOffset: Int64,
         isCancelled: () -> Bool,
-        _ handle: (Int, [String: Any]) -> Void
+        _ handle: (Int, [String: Any]) throws -> Void
     ) throws {
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-        var logicalLineIndex = 0
-        var lineStart = data.startIndex
-        var cursor = data.startIndex
+        let startIndex = try lineStartIndex(in: data, startOffset: startOffset)
+        var logicalLineIndex = logicalLineCount(in: data, before: startIndex)
+        var lineStart = startIndex
+        var cursor = startIndex
 
         while cursor < data.endIndex, !isCancelled() {
             if data[cursor] == 10 {
-                processJSONLine(data, range: lineStart..<cursor, lineIndex: &logicalLineIndex, handle)
+                try processJSONLine(data, range: lineStart..<cursor, lineIndex: &logicalLineIndex, handle)
                 lineStart = data.index(after: cursor)
             }
             cursor = data.index(after: cursor)
         }
 
         if !isCancelled() {
-            processJSONLine(data, range: lineStart..<data.endIndex, lineIndex: &logicalLineIndex, handle)
+            try processJSONLine(data, range: lineStart..<data.endIndex, lineIndex: &logicalLineIndex, handle)
         }
     }
 
@@ -155,14 +172,47 @@ public enum TokenLogParser {
         _ data: Data,
         range: Range<Data.Index>,
         lineIndex: inout Int,
-        _ handle: (Int, [String: Any]) -> Void
-    ) {
+        _ handle: (Int, [String: Any]) throws -> Void
+    ) throws {
         guard !range.isEmpty else { return }
         let currentIndex = lineIndex
         lineIndex += 1
 
         guard let object = parseJSONObject(Data(data[range])) else { return }
-        handle(currentIndex, object)
+        try handle(currentIndex, object)
+    }
+
+    private static func lineStartIndex(in data: Data, startOffset: Int64) throws -> Data.Index {
+        guard startOffset > 0 else { return data.startIndex }
+        let boundedOffset = min(Int(startOffset), data.count)
+        let index = data.index(data.startIndex, offsetBy: boundedOffset)
+        guard index > data.startIndex else { return data.startIndex }
+        let previousIndex = data.index(before: index)
+        guard data[previousIndex] == 10 else {
+            throw IncrementalParseError.requiresFullFile
+        }
+        return index
+    }
+
+    private static func logicalLineCount(in data: Data, before endIndex: Data.Index) -> Int {
+        var count = 0
+        var lineStart = data.startIndex
+        var cursor = data.startIndex
+
+        while cursor < endIndex {
+            if data[cursor] == 10 {
+                if lineStart < cursor {
+                    count += 1
+                }
+                lineStart = data.index(after: cursor)
+            }
+            cursor = data.index(after: cursor)
+        }
+
+        if lineStart < endIndex {
+            count += 1
+        }
+        return count
     }
 
     private static func parseJSONObject(_ data: Data) -> [String: Any]? {

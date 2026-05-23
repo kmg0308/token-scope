@@ -584,7 +584,7 @@ struct DashboardView: View {
             )
         }
 
-        if !model.isScanning && totalFiles == 0 {
+        if !model.isScanning && totalFiles == 0 && model.scanResult.events.isEmpty {
             return DashboardNotice(
                 icon: "folder.badge.questionmark",
                 title: "No local token logs found",

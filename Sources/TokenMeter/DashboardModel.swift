@@ -150,7 +150,12 @@ final class DashboardModel: ObservableObject {
         let storedSyncFolderPath = defaults.string(forKey: Self.syncFolderPathKey)
         self.syncFolderPath = storedSyncFolderPath
         self.deviceFilter = storedSyncFolderPath?.isEmpty == false ? Self.allDevicesFilterId : device.id
-        refresh()
+        if loadCachedDashboardResult() {
+            refreshAfterScroll = true
+            scheduleRefreshAfterScroll()
+        } else {
+            refresh()
+        }
     }
 
     func refresh(restartInProgress: Bool = false, fullSync: Bool = false) {
@@ -621,6 +626,18 @@ final class DashboardModel: ObservableObject {
     private func cancelDeferredRefresh() {
         deferredRefreshTask?.cancel()
         deferredRefreshTask = nil
+    }
+
+    private func loadCachedDashboardResult() -> Bool {
+        let windowStart = scanWindowStart(for: range)
+        guard let cachedResult = scanner.cachedResult(eventAfter: windowStart, syncFolder: syncFolderURL) else {
+            return false
+        }
+        scanResult = cachedResult
+        markEventsChanged()
+        markLoadedWindow(eventAfter: windowStart)
+        normalizeFilters()
+        return true
     }
 
     private func scanWindowStart(for range: TimeRangePreset) -> Date? {

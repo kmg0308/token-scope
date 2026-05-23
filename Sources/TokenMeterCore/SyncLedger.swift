@@ -158,7 +158,6 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
     ) -> (events: [TokenEvent], deviceFileCount: Int, parseErrorCount: Int) {
         let devicesURL = folder.appendingPathComponent("devices", isDirectory: true)
         guard fileManager.fileExists(atPath: devicesURL.path) else {
-            try? cacheStore?.removeMissingOrigins(originKind: .syncLedger, keeping: [])
             return ([], 0, 0)
         }
 
@@ -183,7 +182,9 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             events.append(contentsOf: result.events)
         }
 
-        try? cacheStore?.removeMissingOrigins(originKind: .syncLedger, keeping: ledgerPaths)
+        if !ledgerPaths.isEmpty, !isCancelled() {
+            try? cacheStore?.removeMissingOrigins(originKind: .syncLedger, keeping: ledgerPaths)
+        }
         return (events, fileCount, parseErrors)
     }
 
@@ -199,7 +200,7 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
 
         let result = readRecords(from: url, importedAfter: importedAfter, isCancelled: isCancelled)
         let events = result.records.map(\.tokenEvent)
-        if importedAfter == nil, result.parseErrorCount == 0 {
+        if importedAfter == nil, result.completed, result.parseErrorCount == 0 {
             cacheLedger(events: events, at: url)
         }
         return (events, result.parseErrorCount)
@@ -253,16 +254,13 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
 
     private func readIdentityKeys(from url: URL, isCancelled: () -> Bool) -> Set<String> {
         guard fileManager.fileExists(atPath: url.path) else { return [] }
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-
-        let decoder = Self.jsonDecoder
         var keys: Set<String> = []
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) where !isCancelled() {
-            guard let data = String(line).data(using: .utf8),
-                  let identity = try? decoder.decode(SyncLedgerIdentity.self, from: data) else {
-                continue
+
+        _ = try? forEachLedgerLine(in: url, isCancelled: isCancelled) { data in
+            guard let identityKey = identityKey(from: data) else {
+                return
             }
-            keys.insert(identity.identityKey)
+            keys.insert(identityKey)
         }
         return keys
     }
@@ -271,40 +269,93 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         from url: URL,
         importedAfter: Date? = nil,
         isCancelled: () -> Bool
-    ) -> (records: [SyncLedgerRecord], parseErrorCount: Int) {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
-            return ([], 1)
-        }
-
+    ) -> (records: [SyncLedgerRecord], parseErrorCount: Int, completed: Bool) {
         let decoder = Self.jsonDecoder
         var records: [SyncLedgerRecord] = []
         var parseErrors = 0
+        let importedAfterText = importedAfter.map(Self.string(from:))
 
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) where !isCancelled() {
-            guard let data = String(line).data(using: .utf8) else {
-                parseErrors += 1
-                continue
-            }
-
-            if let importedAfter {
+        do {
+            let completed = try forEachLedgerLine(in: url, isCancelled: isCancelled) { data in
+                if let importedAfterText {
+                    guard let timestamp = jsonStringValue(after: Self.timestampMarker, in: data) else {
+                        parseErrors += 1
+                        return
+                    }
+                    guard timestamp >= importedAfterText else { return }
+                }
                 do {
-                    let timestamp = try decoder.decode(SyncLedgerTimestamp.self, from: data).timestamp
-                    guard timestamp >= importedAfter else { continue }
+                    let record = try decoder.decode(SyncLedgerRecord.self, from: data)
+                    records.append(record)
                 } catch {
                     parseErrors += 1
-                    continue
                 }
             }
+            return (records, parseErrors, completed)
+        } catch {
+            return ([], 1, true)
+        }
+    }
 
-            do {
-                let record = try decoder.decode(SyncLedgerRecord.self, from: data)
-                records.append(record)
-            } catch {
-                parseErrors += 1
+    private func forEachLedgerLine(
+        in url: URL,
+        isCancelled: () -> Bool,
+        _ handle: (Data) throws -> Void
+    ) throws -> Bool {
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        var lineStart = data.startIndex
+        var cursor = data.startIndex
+        var bytesUntilCancelCheck = 0
+
+        while cursor < data.endIndex {
+            bytesUntilCancelCheck += 1
+            if bytesUntilCancelCheck >= 16_384 {
+                guard !isCancelled() else { return false }
+                bytesUntilCancelCheck = 0
             }
+            if data[cursor] == 10 {
+                if lineStart < cursor {
+                    try handle(Data(data[lineStart..<cursor]))
+                }
+                lineStart = data.index(after: cursor)
+            }
+            cursor = data.index(after: cursor)
         }
 
-        return (records, parseErrors)
+        guard !isCancelled() else { return false }
+        if lineStart < data.endIndex {
+            try handle(Data(data[lineStart..<data.endIndex]))
+        }
+        return true
+    }
+
+    private func identityKey(from data: Data) -> String? {
+        guard let deviceId = jsonStringValue(after: Self.deviceIdMarker, in: data),
+              let eventId = jsonStringValue(after: Self.eventIdMarker, in: data) else {
+            return nil
+        }
+        return "\(deviceId)|\(eventId)"
+    }
+
+    private func jsonStringValue(after marker: Data, in data: Data) -> String? {
+        guard let markerRange = data.range(of: marker) else { return nil }
+        var cursor = markerRange.upperBound
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(64)
+
+        while cursor < data.endIndex {
+            let byte = data[cursor]
+            if byte == 0x22 {
+                return String(bytes: bytes, encoding: .utf8)
+            }
+            if byte == 0x5C {
+                cursor = data.index(after: cursor)
+                guard cursor < data.endIndex else { return nil }
+            }
+            bytes.append(data[cursor])
+            cursor = data.index(after: cursor)
+        }
+        return nil
     }
 
     private func safeFileName(_ value: String) -> String {
@@ -340,38 +391,43 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
     }
 
     private static func string(from date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: date)
+        dateCodec.string(from: date)
     }
 
     private static func date(from value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: value) {
-            return date
-        }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: value)
+        dateCodec.date(from: value)
     }
+
+    private static let dateCodec = SyncLedgerDateCodec()
+    private static let deviceIdMarker = Data(#""device_id":""#.utf8)
+    private static let eventIdMarker = Data(#""event_id":""#.utf8)
+    private static let timestampMarker = Data(#""timestamp":""#.utf8)
 }
 
-private struct SyncLedgerIdentity: Decodable {
-    var deviceId: String
-    var eventId: String
+private final class SyncLedgerDateCodec: @unchecked Sendable {
+    private let lock = NSLock()
+    private let fractionalDateFormatter: ISO8601DateFormatter
+    private let plainDateFormatter: ISO8601DateFormatter
 
-    var identityKey: String {
-        "\(deviceId)|\(eventId)"
+    init() {
+        fractionalDateFormatter = ISO8601DateFormatter()
+        fractionalDateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        plainDateFormatter = ISO8601DateFormatter()
+        plainDateFormatter.formatOptions = [.withInternetDateTime]
     }
 
-    enum CodingKeys: String, CodingKey {
-        case deviceId = "device_id"
-        case eventId = "event_id"
+    func string(from date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return fractionalDateFormatter.string(from: date)
     }
-}
 
-private struct SyncLedgerTimestamp: Decodable {
-    var timestamp: Date
+    func date(from value: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return fractionalDateFormatter.date(from: value) ?? plainDateFormatter.date(from: value)
+    }
 }
 
 private struct SyncLedgerRecord: Codable, Hashable {

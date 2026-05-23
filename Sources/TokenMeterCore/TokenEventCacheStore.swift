@@ -42,6 +42,11 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         case parseError
     }
 
+    struct IncrementalAppendBase {
+        var size: Int64
+        var modifiedAt: Date
+    }
+
     private let lock = NSRecursiveLock()
     private var database: OpaquePointer?
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -125,6 +130,24 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
+    func incrementalAppendBase(for snapshot: FileSnapshot, originKind: OriginKind) throws -> IncrementalAppendBase? {
+        try locked {
+            guard let metadata = try metadata(for: snapshot, originKind: originKind),
+                  metadata.parserVersion == Self.parserVersion,
+                  metadata.deviceId == snapshot.deviceId,
+                  metadata.source == snapshot.source,
+                  !metadata.parseError,
+                  metadata.size > 0,
+                  snapshot.size > metadata.size else {
+                return nil
+            }
+            return IncrementalAppendBase(
+                size: metadata.size,
+                modifiedAt: Date(timeIntervalSince1970: metadata.modifiedAt)
+            )
+        }
+    }
+
     func events(modifiedAfter: Date? = nil) throws -> [TokenEvent] {
         try locked {
             let sql: String
@@ -205,8 +228,6 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         for snapshot: FileSnapshot,
         originKind: OriginKind
     ) throws {
-        guard !events.isEmpty else { return }
-
         try locked {
             try transaction {
                 let existingCount = try eventCount(originKind: originKind, path: snapshot.path)
@@ -226,8 +247,11 @@ public final class TokenEventCacheStore: @unchecked Sendable {
     func removeMissingOrigins(originKind: OriginKind, keeping existingPaths: Set<String>) throws {
         try locked {
             let paths = try originPaths(originKind: originKind)
-            for path in paths where !existingPaths.contains(path) {
-                try transaction {
+            let missingPaths = paths.filter { !existingPaths.contains($0) }
+            guard !missingPaths.isEmpty else { return }
+
+            try transaction {
+                for path in missingPaths {
                     try deleteOrigin(originKind: originKind, path: path)
                     try deleteOriginFile(originKind: originKind, path: path)
                 }
@@ -308,6 +332,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         var modifiedAt: TimeInterval
         var parserVersion: Int
         var deviceId: String?
+        var source: TokenSource?
         var parseError: Bool
     }
 
@@ -315,7 +340,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         var statement: OpaquePointer?
         try prepare(
             """
-            SELECT file_size, modified_at, parser_version, device_id, parse_error
+            SELECT file_size, modified_at, parser_version, device_id, source, parse_error
             FROM origin_files
             WHERE origin_kind = ? AND origin_path = ?
             """,
@@ -333,7 +358,8 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             modifiedAt: sqlite3_column_double(statement, 1),
             parserVersion: Int(sqlite3_column_int(statement, 2)),
             deviceId: nullableColumnString(statement, 3),
-            parseError: sqlite3_column_int(statement, 4) != 0
+            source: nullableColumnString(statement, 4).flatMap(TokenSource.init(rawValue:)),
+            parseError: sqlite3_column_int(statement, 5) != 0
         )
     }
 
@@ -342,6 +368,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             && abs(metadata.modifiedAt - snapshot.modifiedAt.timeIntervalSince1970) < 0.000_001
             && metadata.parserVersion == Self.parserVersion
             && metadata.deviceId == snapshot.deviceId
+            && metadata.source == snapshot.source
     }
 
     private func eventsForOrigin(

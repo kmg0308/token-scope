@@ -13,6 +13,8 @@ enum TokenMeterSelfTest {
         try dashboardBucketOptionsStayReadable()
         try scannerIncludesAllRecentClaudeFiles()
         try scannerReusesCachedLocalFilesUntilTheyChange()
+        try scannerReturnsCachedResultBeforeRefresh()
+        try scannerAppendsGrowingLocalFileFromCache()
         try scannerKeepsCachedHistoryDuringRecentRefresh()
         try syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents()
         try syncFolderAppendsOnlyNewLocalEvents()
@@ -286,6 +288,76 @@ enum TokenMeterSelfTest {
         )
         try expect(Aggregation.totalUsage(events: refreshed.events).total == 15, "recent refresh keeps cached history")
         try expect(refreshed.parseErrorCount == 0, "recent refresh does not reparse old cached files")
+    }
+
+    private static func scannerReturnsCachedResultBeforeRefresh() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cache = try temporaryCache(in: directory)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+
+        try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "cached-result.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-a",
+            input: 10
+        )
+
+        _ = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        let cached = scanner.cachedResult(eventAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(cached != nil, "scanner returns cached dashboard result")
+        try expect(Aggregation.totalUsage(events: cached?.events ?? []).total == 10, "cached dashboard result keeps totals")
+    }
+
+    private static func scannerAppendsGrowingLocalFileFromCache() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cache = try temporaryCache(in: directory)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+
+        let logURL = try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "growing.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-a",
+            input: 10
+        )
+        try setModificationDate(isoDate("2026-01-01T00:05:00.000Z"), for: logURL)
+
+        let first = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: first.events).total == 10, "initial growing file total")
+
+        try appendClaudeLogLine(
+            to: logURL,
+            timestamp: "2026-01-01T00:01:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-b",
+            input: 25
+        )
+        try setModificationDate(isoDate("2026-01-01T00:10:00.000Z"), for: logURL)
+
+        let grown = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: grown.events).total == 35, "growing file keeps cached events and appends new ones")
+        try expect(grown.parseErrorCount == 0, "growing file avoids parse errors")
+
+        let cached = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: cached.events).total == 35, "growing file refreshed cache is reusable")
     }
 
     private static func syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents() throws {
@@ -592,6 +664,34 @@ enum TokenMeterSelfTest {
         let url = projectDirectory.appendingPathComponent(fileName)
         try content.write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+
+    private static func appendClaudeLogLine(
+        to url: URL,
+        timestamp: String,
+        cwd: String,
+        sessionId: String,
+        requestId: String,
+        input: Int
+    ) throws {
+        let line = """
+        {"timestamp":"\(timestamp)","sessionId":"\(sessionId)","requestId":"\(requestId)","uuid":"\(requestId)-uuid","cwd":"\(cwd)","type":"assistant","message":{"model":"claude-opus","usage":{"input_tokens":\(input),"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}
+        """ + "\n"
+        let handle = try FileHandle(forUpdating: url)
+        defer {
+            try? handle.close()
+        }
+        let endOffset = try handle.seekToEnd()
+        if endOffset > 0 {
+            try handle.seek(toOffset: endOffset - 1)
+            let lastByte = handle.readDataToEndOfFile()
+            if lastByte != Data([0x0A]) {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data([0x0A]))
+            }
+        }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(line.utf8))
     }
 
     private static func temporaryCache(in directory: URL) throws -> TokenEventCacheStore {

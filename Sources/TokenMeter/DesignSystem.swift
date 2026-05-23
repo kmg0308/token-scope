@@ -114,7 +114,7 @@ struct TokenSmoothScrollView<Content: View>: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: TokenHostingScrollView<Content>, context: Context) {
-        scrollView.rootView = content
+        scrollView.updateRootView(content)
     }
 }
 
@@ -123,15 +123,24 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
     private var lastLaidOutWidth: CGFloat = 0
     private var cachedFittingHeight: CGFloat = 1
     private var needsFittingHeightUpdate = true
+    private var isDeferringRootUpdates = false
+    private var pendingRootView: Content?
+    private var endScrollWorkItem: DispatchWorkItem?
 
     var rootView: Content {
         get { hostingView.rootView }
         set {
-            hostingView.rootView = newValue
-            hostingView.invalidateIntrinsicContentSize()
-            needsFittingHeightUpdate = true
-            needsLayout = true
+            updateRootView(newValue)
         }
+    }
+
+    func updateRootView(_ newRootView: Content) {
+        if isDeferringRootUpdates {
+            pendingRootView = newRootView
+            return
+        }
+
+        applyRootView(newRootView)
     }
 
     init(rootView: Content) {
@@ -161,6 +170,23 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
         hostingView.layerContentsRedrawPolicy = .onSetNeedsDisplay
         hostingView.translatesAutoresizingMaskIntoConstraints = true
         documentView = hostingView
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(willStartLiveScroll),
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: self
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(didEndLiveScroll),
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: self
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     @available(*, unavailable)
@@ -171,6 +197,58 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
     override func layout() {
         super.layout()
         layoutHostingView()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        beginRootUpdateDeferral()
+        super.scrollWheel(with: event)
+
+        if event.phase == .ended || event.momentumPhase == .ended || event.phase == .cancelled {
+            endRootUpdateDeferral()
+        } else {
+            scheduleRootUpdateDeferralEnd()
+        }
+    }
+
+    @objc private func willStartLiveScroll() {
+        beginRootUpdateDeferral()
+    }
+
+    @objc private func didEndLiveScroll() {
+        endRootUpdateDeferral()
+    }
+
+    private func applyRootView(_ newRootView: Content) {
+        hostingView.rootView = newRootView
+        hostingView.invalidateIntrinsicContentSize()
+        needsFittingHeightUpdate = true
+        needsLayout = true
+    }
+
+    private func beginRootUpdateDeferral() {
+        isDeferringRootUpdates = true
+        endScrollWorkItem?.cancel()
+        endScrollWorkItem = nil
+    }
+
+    private func scheduleRootUpdateDeferralEnd() {
+        endScrollWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.endRootUpdateDeferral()
+        }
+        endScrollWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+    }
+
+    private func endRootUpdateDeferral() {
+        endScrollWorkItem?.cancel()
+        endScrollWorkItem = nil
+        isDeferringRootUpdates = false
+
+        guard let pendingRootView else { return }
+        self.pendingRootView = nil
+        applyRootView(pendingRootView)
     }
 
     private func layoutHostingView() {

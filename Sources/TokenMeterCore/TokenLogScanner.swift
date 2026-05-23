@@ -10,16 +10,17 @@ public final class TokenLogScanner: @unchecked Sendable {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         fileManager: FileManager = .default,
         localDevice: TokenDeviceMetadata = .localFallback,
-        cacheStore: TokenEventCacheStore? = TokenEventCacheStore.defaultStore()
+        cacheStore: TokenEventCacheStore? = nil
     ) {
         self.homeDirectory = homeDirectory
         self.fileManager = fileManager
         self.localDevice = localDevice
-        self.cacheStore = cacheStore
+        self.cacheStore = cacheStore ?? Self.defaultCacheStore(for: homeDirectory, fileManager: fileManager)
     }
 
     public func scan(
         modifiedAfter: Date? = nil,
+        eventAfter: Date? = nil,
         syncFolder: URL? = nil,
         replaceSyncLedger: Bool = false,
         isCancelled: () -> Bool = { false }
@@ -88,7 +89,8 @@ public final class TokenLogScanner: @unchecked Sendable {
             cacheStore: cacheStore,
             isCancelled: isCancelled
         )
-        let events = deduplicated(events: localEvents + syncOutcome.events)
+        let events = cachedEvents(modifiedAfter: eventAfter ?? modifiedAfter)
+            ?? deduplicated(events: localEvents + syncOutcome.events)
 
         return ScanResult(
             events: events,
@@ -111,6 +113,10 @@ public final class TokenLogScanner: @unchecked Sendable {
 
     public func clearCache() throws {
         try cacheStore?.clear()
+    }
+
+    private func cachedEvents(modifiedAfter: Date?) -> [TokenEvent]? {
+        try? cacheStore?.events(modifiedAfter: modifiedAfter)
     }
 
     private func scanRoots(modifiedAfter: Date?) -> [RootScan] {
@@ -336,5 +342,12 @@ public final class TokenLogScanner: @unchecked Sendable {
 
     private func eventHasLocalDetails(_ event: TokenEvent) -> Bool {
         !event.rawFilePath.hasPrefix("sync://")
+    }
+
+    private static func defaultCacheStore(for homeDirectory: URL, fileManager: FileManager) -> TokenEventCacheStore? {
+        let requestedHome = homeDirectory.resolvingSymlinksInPath().path
+        let defaultHome = fileManager.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
+        guard requestedHome == defaultHome else { return nil }
+        return TokenEventCacheStore.defaultStore(fileManager: fileManager)
     }
 }

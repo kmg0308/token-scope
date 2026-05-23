@@ -121,6 +121,61 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
+    func events(modifiedAfter: Date? = nil) throws -> [TokenEvent] {
+        try locked {
+            let sql: String
+            if modifiedAfter == nil {
+                sql = """
+                SELECT event_json, device_id, event_id, priority
+                FROM event_records
+                ORDER BY timestamp ASC, event_id ASC, priority ASC
+                """
+            } else {
+                sql = """
+                SELECT event_json, device_id, event_id, priority
+                FROM event_records
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC, event_id ASC, priority ASC
+                """
+            }
+
+            var statement: OpaquePointer?
+            try prepare(sql, into: &statement)
+            defer { sqlite3_finalize(statement) }
+            if let modifiedAfter {
+                sqlite3_bind_double(statement, 1, modifiedAfter.timeIntervalSince1970)
+            }
+
+            var eventsByKey: [String: (event: TokenEvent, priority: Int)] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let bytes = sqlite3_column_blob(statement, 0)
+                let count = Int(sqlite3_column_bytes(statement, 0))
+                guard let bytes, count > 0 else { continue }
+
+                let deviceId = columnString(statement, 1)
+                let eventId = columnString(statement, 2)
+                let priority = Int(sqlite3_column_int(statement, 3))
+                let data = Data(bytes: bytes, count: count)
+                guard let event = try? Self.decoder.decode(TokenEvent.self, from: data) else {
+                    continue
+                }
+
+                let key = "\(deviceId)|\(eventId)"
+                if let existing = eventsByKey[key], existing.priority > priority {
+                    continue
+                }
+                eventsByKey[key] = (event, priority)
+            }
+
+            return eventsByKey.values.map(\.event).sorted {
+                if $0.timestamp == $1.timestamp {
+                    return $0.id < $1.id
+                }
+                return $0.timestamp < $1.timestamp
+            }
+        }
+    }
+
     func replaceEvents(
         _ events: [TokenEvent],
         for snapshot: FileSnapshot,

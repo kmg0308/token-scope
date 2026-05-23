@@ -13,6 +13,7 @@ enum TokenMeterSelfTest {
         try dashboardBucketOptionsStayReadable()
         try scannerIncludesAllRecentClaudeFiles()
         try scannerReusesCachedLocalFilesUntilTheyChange()
+        try scannerKeepsCachedHistoryDuringRecentRefresh()
         try syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents()
         try syncFolderAppendsOnlyNewLocalEvents()
         try syncFolderImportsOnlyRequestedWindow()
@@ -235,6 +236,54 @@ enum TokenMeterSelfTest {
         try setModificationDate(isoDate("2026-01-01T00:20:00.000Z"), for: logURL)
         let changed = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
         try expect(Aggregation.totalUsage(events: changed.events).total == 25, "changed file is reparsed")
+    }
+
+    private static func scannerKeepsCachedHistoryDuringRecentRefresh() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cache = try temporaryCache(in: directory)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+
+        let oldURL = try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "old.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-old",
+            input: 10
+        )
+        try setModificationDate(isoDate("2026-01-01T00:05:00.000Z"), for: oldURL)
+
+        let initial = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: initial.events).total == 10, "initial history cache total")
+
+        let recentURL = try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "recent.jsonl",
+            timestamp: "2026-01-03T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-b",
+            requestId: "request-recent",
+            input: 5
+        )
+        try setModificationDate(isoDate("2026-01-03T00:05:00.000Z"), for: recentURL)
+
+        try overwriteWithInvalidContentPreservingSizeAndDate(
+            url: oldURL,
+            date: isoDate("2026-01-01T00:05:00.000Z")
+        )
+        let refreshed = scanner.scan(
+            modifiedAfter: isoDate("2026-01-02T00:00:00.000Z"),
+            eventAfter: isoDate("2025-12-31T00:00:00.000Z")
+        )
+        try expect(Aggregation.totalUsage(events: refreshed.events).total == 15, "recent refresh keeps cached history")
+        try expect(refreshed.parseErrorCount == 0, "recent refresh does not reparse old cached files")
     }
 
     private static func syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents() throws {

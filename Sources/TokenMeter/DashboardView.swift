@@ -68,11 +68,10 @@ struct DashboardView: View {
                 .environmentObject(updates)
         }
         .onReceive(refreshTimer) { _ in
-            model.refresh()
+            model.refreshRecentChanges()
         }
         .onChange(of: model.range) { _ in
-            model.normalizeFilters()
-            model.refresh(restartInProgress: true)
+            model.rangeDidChange()
         }
         .onChange(of: model.selectedSection) { _ in
             model.normalizeFilters()

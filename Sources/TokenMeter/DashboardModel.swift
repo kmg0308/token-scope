@@ -8,6 +8,15 @@ struct DashboardDeviceOption: Identifiable, Hashable {
     var deviceId: String?
 }
 
+private struct EventFilterKey: Hashable {
+    var revision: Int
+    var source: TokenSource
+    var range: TimeRangePreset
+    var project: String?
+    var model: String?
+    var deviceId: String?
+}
+
 enum DashboardSection: String, CaseIterable, Identifiable {
     case all = "All"
     case codex = "Codex"
@@ -100,6 +109,10 @@ final class DashboardModel: ObservableObject {
     private let scanner: TokenLogScanner
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
+    private var loadedEventWindowStart: Date?
+    private var hasLoadedAllEvents = false
+    private var eventRevision = 0
+    private var filteredEventsCache: [EventFilterKey: [TokenEvent]] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -113,6 +126,38 @@ final class DashboardModel: ObservableObject {
     }
 
     func refresh(restartInProgress: Bool = false, fullSync: Bool = false) {
+        let windowStart = fullSync ? nil : scanWindowStart(for: range)
+        startRefresh(
+            fileModifiedAfter: windowStart,
+            eventAfter: windowStart,
+            restartInProgress: restartInProgress,
+            replaceSyncLedger: fullSync
+        )
+    }
+
+    func refreshRecentChanges() {
+        let eventAfter = hasLoadedAllEvents ? nil : (loadedEventWindowStart ?? scanWindowStart(for: range))
+        startRefresh(
+            fileModifiedAfter: recentScanWindowStart(),
+            eventAfter: eventAfter,
+            restartInProgress: false,
+            replaceSyncLedger: false
+        )
+    }
+
+    func rangeDidChange() {
+        normalizeFilters()
+        if needsDataExpansion(for: range) {
+            refresh(restartInProgress: true)
+        }
+    }
+
+    private func startRefresh(
+        fileModifiedAfter: Date?,
+        eventAfter: Date?,
+        restartInProgress: Bool,
+        replaceSyncLedger: Bool
+    ) {
         if isScanning {
             guard restartInProgress else { return }
             scanTask?.cancel()
@@ -123,15 +168,15 @@ final class DashboardModel: ObservableObject {
         let scanner = scanner
         isScanning = true
         errorMessage = nil
-        let windowStart = fullSync ? nil : scanWindowStart(for: range)
         let syncFolderURL = syncFolderURL
 
         scanTask = Task { @MainActor [weak self] in
             let worker = Task.detached(priority: .userInitiated) {
                 scanner.scan(
-                    modifiedAfter: windowStart,
+                    modifiedAfter: fileModifiedAfter,
+                    eventAfter: eventAfter,
                     syncFolder: syncFolderURL,
-                    replaceSyncLedger: fullSync,
+                    replaceSyncLedger: replaceSyncLedger,
                     isCancelled: { Task.isCancelled }
                 )
             }
@@ -142,6 +187,8 @@ final class DashboardModel: ObservableObject {
             }
             guard let self, !Task.isCancelled, generation == self.scanGeneration else { return }
             scanResult = result
+            markEventsChanged()
+            markLoadedWindow(eventAfter: eventAfter)
             normalizeFilters()
             isScanning = false
             scanTask = nil
@@ -258,25 +305,44 @@ final class DashboardModel: ObservableObject {
     }
 
     var filteredEvents: [TokenEvent] {
-        Aggregation.filter(
-            events: scanResult.events,
-            source: selectedSection.sourceFilter,
-            range: range,
-            project: projectFilter,
-            model: modelFilter,
-            deviceId: selectedDeviceId
-        )
+        filteredEvents(source: selectedSection.sourceFilter)
     }
 
     func filteredEvents(source: TokenSource) -> [TokenEvent] {
-        Aggregation.filter(
+        cachedFilteredEvents(
+            source: source,
+            project: projectFilter,
+            model: modelFilter
+        )
+    }
+
+    private func cachedFilteredEvents(
+        source: TokenSource,
+        project: String?,
+        model: String?
+    ) -> [TokenEvent] {
+        let key = EventFilterKey(
+            revision: eventRevision,
+            source: source,
+            range: range,
+            project: project,
+            model: model,
+            deviceId: selectedDeviceId
+        )
+        if let cached = filteredEventsCache[key] {
+            return cached
+        }
+
+        let events = Aggregation.filter(
             events: scanResult.events,
             source: source,
             range: range,
-            project: projectFilter,
-            model: modelFilter,
+            project: project,
+            model: model,
             deviceId: selectedDeviceId
         )
+        filteredEventsCache[key] = events
+        return events
     }
 
     var totalUsage: TokenUsage {
@@ -340,14 +406,38 @@ final class DashboardModel: ObservableObject {
     }
 
     private func optionEvents(project: String?, model: String?) -> [TokenEvent] {
-        Aggregation.filter(
-            events: scanResult.events,
+        cachedFilteredEvents(
             source: selectedSection.sourceFilter,
-            range: range,
             project: project,
-            model: model,
-            deviceId: selectedDeviceId
+            model: model
         )
+    }
+
+    private func needsDataExpansion(for range: TimeRangePreset) -> Bool {
+        guard !hasLoadedAllEvents else { return false }
+        let requiredStart = scanWindowStart(for: range)
+        guard let requiredStart else { return true }
+        guard let loadedEventWindowStart else { return true }
+        return requiredStart < loadedEventWindowStart
+    }
+
+    private func recentScanWindowStart() -> Date {
+        TimeRangePreset.last24Hours.previousInterval().start
+    }
+
+    private func markEventsChanged() {
+        eventRevision += 1
+        filteredEventsCache.removeAll()
+    }
+
+    private func markLoadedWindow(eventAfter: Date?) {
+        guard let eventAfter else {
+            hasLoadedAllEvents = true
+            loadedEventWindowStart = nil
+            return
+        }
+        guard !hasLoadedAllEvents else { return }
+        loadedEventWindowStart = min(loadedEventWindowStart ?? eventAfter, eventAfter)
     }
 
     private func scanWindowStart(for range: TimeRangePreset) -> Date? {

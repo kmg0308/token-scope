@@ -30,8 +30,9 @@ Research was checked on 2026-05-23.
 - Use a normal macOS app window because the dashboard needs enough room for charts, tables, and update controls.
 - Keep the app visible in the Dock and app switcher so users can return to it like a regular utility app.
 - Treat Liquid Glass as the navigation and control layer, not as a finish to paint over every table or chart. Apple warns that glass on content and glass on glass can muddy hierarchy.
-- Use regular glass-like controls and material-backed content cards. On macOS 26, control chrome can adopt SwiftUI `glassEffect`; on older macOS versions it falls back to translucent system material.
-- Use a Grok-adjacent tone: black graphite workspace, sharp white text, electric cyan action color, and sparse mint/violet ambient light only where it helps glass read as transparent.
+- Keep glass out of scroll-heavy content. Dashboard cards, tables, and charts use dark solid surfaces so scrolling stays smooth.
+- Use Liquid Glass as an opt-in command layer. On macOS 26, the floating header can adopt SwiftUI `glassEffect`; older macOS versions keep the same structure with darker solid fallback surfaces.
+- Use a Grok-adjacent tone: black graphite workspace, sharp white text, restrained cyan action color, and minimal ambient color.
 - Liquid Glass must be visible in the product, not just present in code. The header and primary controls should read as a floating glass command layer above the dashboard.
 - Use rounded rectangles for small and medium macOS controls. Reserve capsules for primary actions where extra emphasis is useful.
 - Keep button targets at or above the macOS accessibility minimum of 28x28 pt; compact icon controls are 30x30 pt and regular controls are 34 pt tall.
@@ -42,4 +43,4 @@ Research was checked on 2026-05-23.
 - Make one chart the center of the screen. Apple recommends keeping charts simple and revealing additional detail gradually.
 - Hide tables behind Details because exact values are useful but should not dominate the first view.
 - Borrow the current AI app feel through restraint: quiet dark surfaces, low-saturation controls, clear command grouping, strong content hierarchy, and no brand-specific copying from ChatGPT, Claude, or Grok.
-- Avoid dated AI-looking visual patterns: no oversized hero text, no gradient blobs, no decorative cards, no vague copy, no saturated palette.
+- Avoid dated AI-looking visual patterns: no oversized hero text, no gradient blobs, no decorative cards, no vague copy, no saturated palette, and no repeated gradients inside cards or buttons.

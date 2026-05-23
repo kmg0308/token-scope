@@ -54,7 +54,6 @@ struct DashboardView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 22)
             }
-            .tokenScrollEdgeGlass()
         }
         .foregroundStyle(TokenMeterTheme.primaryText)
         .background {
@@ -132,7 +131,7 @@ struct DashboardView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .tokenSurface(elevated: true, radius: 18)
+        .tokenSurface(elevated: true, radius: 18, glass: true)
     }
 
     private var headerSubtitle: String {

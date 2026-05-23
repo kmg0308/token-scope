@@ -1,25 +1,27 @@
 import SwiftUI
 
 enum TokenMeterTheme {
-    static let background = Color(red: 0.015, green: 0.016, blue: 0.018)
-    static let backgroundTop = Color(red: 0.035, green: 0.038, blue: 0.044)
-    static let backgroundInk = Color(red: 0.002, green: 0.006, blue: 0.007)
-    static let surface = Color.white.opacity(0.048)
-    static let elevatedSurface = Color.white.opacity(0.072)
-    static let surfaceFallback = Color(red: 0.055, green: 0.058, blue: 0.064)
-    static let elevatedSurfaceFallback = Color(red: 0.074, green: 0.078, blue: 0.088)
-    static let control = Color.white.opacity(0.072)
-    static let controlHover = Color.white.opacity(0.135)
-    static let selectedControl = Color.white.opacity(0.18)
-    static let border = Color.white.opacity(0.14)
-    static let subtleBorder = Color.white.opacity(0.075)
-    static let highlightBorder = Color.white.opacity(0.28)
+    static let background = Color(red: 0.010, green: 0.012, blue: 0.016)
+    static let backgroundTop = Color(red: 0.026, green: 0.031, blue: 0.038)
+    static let backgroundInk = Color(red: 0.004, green: 0.006, blue: 0.009)
+    static let surface = Color(red: 0.050, green: 0.058, blue: 0.070)
+    static let elevatedSurface = Color(red: 0.066, green: 0.077, blue: 0.092)
+    static let surfaceFallback = Color(red: 0.050, green: 0.058, blue: 0.070)
+    static let elevatedSurfaceFallback = Color(red: 0.066, green: 0.077, blue: 0.092)
+    static let control = Color(red: 0.074, green: 0.086, blue: 0.102)
+    static let controlHover = Color(red: 0.100, green: 0.118, blue: 0.140)
+    static let selectedControl = Color(red: 0.090, green: 0.145, blue: 0.170)
+    static let border = Color.white.opacity(0.105)
+    static let subtleBorder = Color.white.opacity(0.065)
+    static let highlightBorder = Color.white.opacity(0.16)
     static let primaryText = Color.white.opacity(0.94)
     static let secondaryText = Color.white.opacity(0.62)
     static let tertiaryText = Color.white.opacity(0.42)
-    static let accent = Color(red: 0.52, green: 0.86, blue: 1.0)
-    static let mint = Color(red: 0.55, green: 1.0, blue: 0.78)
-    static let violet = Color(red: 0.62, green: 0.52, blue: 1.0)
+    static let accent = Color(red: 0.42, green: 0.78, blue: 0.96)
+    static let accentFill = Color(red: 0.125, green: 0.360, blue: 0.480)
+    static let accentFillPressed = Color(red: 0.095, green: 0.290, blue: 0.390)
+    static let mint = Color(red: 0.46, green: 0.88, blue: 0.68)
+    static let violet = Color(red: 0.50, green: 0.46, blue: 0.84)
     static let positive = Color(red: 0.38, green: 0.88, blue: 0.62)
     static let warning = Color(red: 1.0, green: 0.73, blue: 0.32)
 
@@ -36,74 +38,11 @@ enum TokenMeterTheme {
         startPoint: .top,
         endPoint: .bottom
     )
-
-    static let surfaceStroke = LinearGradient(
-        colors: [highlightBorder, subtleBorder],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
 }
 
 struct TokenLiquidBackdrop: View {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
     var body: some View {
-        ZStack {
-            TokenMeterTheme.backgroundGradient
-
-            if !reduceTransparency {
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        TokenMeterTheme.accent.opacity(0.22),
-                        TokenMeterTheme.mint.opacity(0.10),
-                        Color.clear
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 780, height: 210)
-                .rotationEffect(.degrees(-10))
-                .offset(x: 160, y: -230)
-                .blur(radius: 26)
-
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        TokenMeterTheme.violet.opacity(0.12),
-                        TokenMeterTheme.accent.opacity(0.10),
-                        Color.clear
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 860, height: 180)
-                .rotationEffect(.degrees(16))
-                .offset(x: -140, y: 260)
-                .blur(radius: 34)
-
-                Canvas { context, size in
-                    var diagonal = Path()
-                    var x = -size.height
-                    while x < size.width + size.height {
-                        diagonal.move(to: CGPoint(x: x, y: 0))
-                        diagonal.addLine(to: CGPoint(x: x + size.height * 0.32, y: size.height))
-                        x += 46
-                    }
-                    context.stroke(diagonal, with: .color(Color.white.opacity(0.026)), lineWidth: 0.7)
-
-                    var horizontal = Path()
-                    var y: CGFloat = 58
-                    while y < size.height {
-                        horizontal.move(to: CGPoint(x: 0, y: y))
-                        horizontal.addLine(to: CGPoint(x: size.width, y: y))
-                        y += 58
-                    }
-                    context.stroke(horizontal, with: .color(TokenMeterTheme.accent.opacity(0.026)), lineWidth: 0.6)
-                }
-                .blendMode(.screen)
-            }
-        }
+        TokenMeterTheme.backgroundGradient
     }
 }
 
@@ -111,51 +50,36 @@ struct TokenSurfaceModifier: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var elevated = false
     var radius = TokenMeterTheme.cardRadius
+    var glass = false
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        let fill = reduceTransparency
+            ? (elevated ? TokenMeterTheme.elevatedSurfaceFallback : TokenMeterTheme.surfaceFallback)
+            : (elevated ? TokenMeterTheme.elevatedSurface : TokenMeterTheme.surface)
 
         let base = content
             .background {
-                if reduceTransparency {
-                    shape.fill(elevated ? TokenMeterTheme.elevatedSurfaceFallback : TokenMeterTheme.surfaceFallback)
-                } else {
-                    ZStack {
-                        shape.fill(.ultraThinMaterial)
-                        shape.fill(elevated ? TokenMeterTheme.elevatedSurface : TokenMeterTheme.surface)
+                ZStack {
+                    if glass, !reduceTransparency {
+                        shape.fill(.thinMaterial)
                     }
+                    shape.fill(fill)
                 }
             }
             .overlay {
-                shape.stroke(elevated ? TokenMeterTheme.surfaceStroke : LinearGradient(
-                    colors: [TokenMeterTheme.border, TokenMeterTheme.subtleBorder],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ), lineWidth: 1)
+                shape.stroke(elevated ? TokenMeterTheme.border : TokenMeterTheme.subtleBorder, lineWidth: 1)
             }
             .overlay {
-                shape
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(elevated ? 0.16 : 0.09),
-                                Color.clear,
-                                Color.black.opacity(0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .blendMode(.screen)
+                shape.stroke(Color.white.opacity(elevated ? 0.055 : 0.035), lineWidth: 1)
                     .allowsHitTesting(false)
             }
-            .shadow(color: Color.black.opacity(elevated ? 0.38 : 0.20), radius: elevated ? 24 : 12, x: 0, y: elevated ? 14 : 6)
-            .shadow(color: TokenMeterTheme.accent.opacity(elevated ? 0.08 : 0.03), radius: elevated ? 18 : 8, x: 0, y: 0)
+            .shadow(color: Color.black.opacity(elevated ? (glass ? 0.30 : 0.18) : 0.08), radius: elevated ? (glass ? 16 : 7) : 3, x: 0, y: elevated ? (glass ? 9 : 4) : 1)
             .clipShape(shape)
 
         #if compiler(>=6.3)
-        if #available(macOS 26.0, *), elevated, !reduceTransparency {
-            base.glassEffect(.regular.tint(Color.white.opacity(0.035)), in: shape)
+        if #available(macOS 26.0, *), glass, elevated, !reduceTransparency {
+            base.glassEffect(.regular.tint(Color.white.opacity(0.025)), in: shape)
         } else {
             base
         }
@@ -166,21 +90,8 @@ struct TokenSurfaceModifier: ViewModifier {
 }
 
 extension View {
-    func tokenSurface(elevated: Bool = false, radius: CGFloat = TokenMeterTheme.cardRadius) -> some View {
-        modifier(TokenSurfaceModifier(elevated: elevated, radius: radius))
-    }
-
-    @ViewBuilder
-    func tokenScrollEdgeGlass() -> some View {
-        #if compiler(>=6.3)
-        if #available(macOS 26.0, *) {
-            scrollEdgeEffectStyle(.soft, for: .top)
-        } else {
-            self
-        }
-        #else
-        self
-        #endif
+    func tokenSurface(elevated: Bool = false, radius: CGFloat = TokenMeterTheme.cardRadius, glass: Bool = false) -> some View {
+        modifier(TokenSurfaceModifier(elevated: elevated, radius: radius, glass: glass))
     }
 }
 
@@ -191,7 +102,7 @@ struct TokenControlChrome: View {
     var isProminent = false
     var cornerRadius = TokenMeterTheme.controlRadius
     var glassTint: Color?
-    var usesGlassEffect = true
+    var usesGlassEffect = false
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -199,33 +110,11 @@ struct TokenControlChrome: View {
 
         let chrome = ZStack {
             shape.fill(fill)
-            shape
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(isProminent ? 0.28 : 0.18),
-                            Color.clear,
-                            Color.black.opacity(0.14)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .blendMode(.screen)
-            shape.stroke(
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(isProminent ? 0.48 : 0.28),
-                        TokenMeterTheme.subtleBorder
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+            shape.stroke(strokeColor, lineWidth: 1)
+            shape.stroke(Color.white.opacity(isProminent ? 0.08 : 0.04), lineWidth: 1)
         }
 
-        let shadowColor = isProminent ? TokenMeterTheme.accent.opacity(0.38) : Color.black.opacity(0.28)
+        let shadowColor = isProminent ? TokenMeterTheme.accent.opacity(0.22) : Color.black.opacity(0.16)
 
         #if compiler(>=6.3)
         if #available(macOS 26.0, *), !reduceTransparency, usesGlassEffect {
@@ -233,36 +122,35 @@ struct TokenControlChrome: View {
                 chrome
             }
             .glassEffect(.regular.tint(glassTint ?? (isProminent ? TokenMeterTheme.accent : nil)).interactive(), in: shape)
-            .shadow(color: shadowColor, radius: isProminent ? 16 : 10, x: 0, y: isProminent ? 5 : 4)
-            .shadow(color: Color.white.opacity(0.06), radius: 1, x: -1, y: -1)
+            .shadow(color: shadowColor, radius: isProminent ? 10 : 6, x: 0, y: isProminent ? 4 : 2)
         } else {
-            ZStack {
-                if !reduceTransparency {
-                    shape.fill(.ultraThinMaterial)
-                }
-                chrome
-            }
-            .shadow(color: shadowColor, radius: isProminent ? 14 : 8, x: 0, y: isProminent ? 5 : 4)
+            chrome
+                .shadow(color: shadowColor, radius: isProminent ? 8 : 3, x: 0, y: isProminent ? 3 : 1)
         }
         #else
-        ZStack {
-            if !reduceTransparency {
-                shape.fill(.ultraThinMaterial)
-            }
-            chrome
-        }
-        .shadow(color: shadowColor, radius: isProminent ? 14 : 8, x: 0, y: isProminent ? 5 : 4)
+        chrome
+            .shadow(color: shadowColor, radius: isProminent ? 8 : 3, x: 0, y: isProminent ? 3 : 1)
         #endif
     }
 
     private var fillColor: Color {
         if isProminent {
-            return TokenMeterTheme.accent.opacity(isPressed ? 0.70 : 0.84)
+            return isPressed ? TokenMeterTheme.accentFillPressed : TokenMeterTheme.accentFill
         }
         if isActive {
             return TokenMeterTheme.selectedControl.opacity(isPressed ? 0.86 : 1)
         }
         return (isPressed ? TokenMeterTheme.controlHover : TokenMeterTheme.control)
+    }
+
+    private var strokeColor: Color {
+        if isProminent {
+            return TokenMeterTheme.accent.opacity(isPressed ? 0.50 : 0.36)
+        }
+        if isActive {
+            return TokenMeterTheme.accent.opacity(0.24)
+        }
+        return isPressed ? TokenMeterTheme.highlightBorder : TokenMeterTheme.subtleBorder
     }
 }
 
@@ -290,7 +178,7 @@ struct TokenPillButtonStyle: ButtonStyle {
     }
 
     private var foregroundColor: Color {
-        prominent ? Color.black.opacity(0.90) : TokenMeterTheme.primaryText
+        TokenMeterTheme.primaryText
     }
 }
 
@@ -301,7 +189,7 @@ struct TokenCompactIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(selected ? Color.black.opacity(0.90) : TokenMeterTheme.secondaryText)
+            .foregroundStyle(selected ? TokenMeterTheme.primaryText : TokenMeterTheme.secondaryText)
             .frame(width: TokenMeterTheme.compactIconButtonSize, height: TokenMeterTheme.compactIconButtonSize)
             .background {
                 TokenControlChrome(
@@ -322,7 +210,7 @@ struct TokenIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(prominent ? Color.black.opacity(0.90) : TokenMeterTheme.primaryText)
+            .foregroundStyle(TokenMeterTheme.primaryText)
             .frame(width: TokenMeterTheme.iconButtonSize, height: TokenMeterTheme.iconButtonSize)
             .background {
                 TokenControlChrome(

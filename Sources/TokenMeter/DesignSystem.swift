@@ -153,11 +153,15 @@ struct TokenSurfaceModifier: ViewModifier {
             .shadow(color: TokenMeterTheme.accent.opacity(elevated ? 0.08 : 0.03), radius: elevated ? 18 : 8, x: 0, y: 0)
             .clipShape(shape)
 
+        #if compiler(>=6.3)
         if #available(macOS 26.0, *), elevated, !reduceTransparency {
             base.glassEffect(.regular.tint(Color.white.opacity(0.035)), in: shape)
         } else {
             base
         }
+        #else
+        base
+        #endif
     }
 }
 
@@ -168,11 +172,15 @@ extension View {
 
     @ViewBuilder
     func tokenScrollEdgeGlass() -> some View {
+        #if compiler(>=6.3)
         if #available(macOS 26.0, *) {
             scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             self
         }
+        #else
+        self
+        #endif
     }
 }
 
@@ -219,6 +227,7 @@ struct TokenControlChrome: View {
 
         let shadowColor = isProminent ? TokenMeterTheme.accent.opacity(0.38) : Color.black.opacity(0.28)
 
+        #if compiler(>=6.3)
         if #available(macOS 26.0, *), !reduceTransparency, usesGlassEffect {
             ZStack {
                 chrome
@@ -235,6 +244,15 @@ struct TokenControlChrome: View {
             }
             .shadow(color: shadowColor, radius: isProminent ? 14 : 8, x: 0, y: isProminent ? 5 : 4)
         }
+        #else
+        ZStack {
+            if !reduceTransparency {
+                shape.fill(.ultraThinMaterial)
+            }
+            chrome
+        }
+        .shadow(color: shadowColor, radius: isProminent ? 14 : 8, x: 0, y: isProminent ? 5 : 4)
+        #endif
     }
 
     private var fillColor: Color {

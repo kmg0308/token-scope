@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import TokenMeterCore
 
 @MainActor
 final class UpdateModel: ObservableObject {
@@ -12,11 +13,22 @@ final class UpdateModel: ObservableObject {
     @Published var downloadedFile: URL?
     @Published var downloadedFileIsInstallable = false
     @Published var isSheetPresented = false
+    private static let autoCheckIntervalNanoseconds: UInt64 = 21_600_000_000_000
     private var autoCheckTask: Task<Void, Never>?
+    private var downloadedReleaseIdentity: String?
+    private let statusTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        return formatter
+    }()
 
     var updateLabel: String? {
         guard let availability, availability.isAvailable else { return nil }
         return "Update \(availability.release.version)"
+    }
+
+    deinit {
+        autoCheckTask?.cancel()
     }
 
     func checkIfConfigured(silent: Bool = false) {
@@ -27,13 +39,12 @@ final class UpdateModel: ObservableObject {
         guard autoCheckTask == nil else { return }
 
         autoCheckTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            checkIfConfigured(silent: true)
+            self?.checkIfConfigured(silent: true)
 
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 21_600_000_000_000)
+                try? await Task.sleep(nanoseconds: Self.autoCheckIntervalNanoseconds)
                 guard !Task.isCancelled else { return }
-                checkIfConfigured(silent: true)
+                self?.checkIfConfigured(silent: true)
             }
         }
     }
@@ -50,6 +61,7 @@ final class UpdateModel: ObservableObject {
             do {
                 let result = try await UpdateService.checkLatestRelease()
                 availability = result
+                clearStaleDownloadedUpdate(for: result)
                 statusText = result.isAvailable
                     ? "Version \(result.release.version) is available."
                     : upToDateStatusText()
@@ -76,12 +88,27 @@ final class UpdateModel: ObservableObject {
 
     func installDownloadedUpdate() {
         do {
-            guard let downloadedFile else { throw UpdateServiceError.noDownloadedFile }
+            guard !isInstalling else { return }
+            guard let downloadedFile,
+                  FileManager.default.fileExists(atPath: downloadedFile.path) else {
+                clearDownloadedUpdate()
+                throw UpdateServiceError.noDownloadedFile
+            }
             isInstalling = true
             isSheetPresented = true
             statusText = "Installing and relaunching..."
-            try UpdateService.installDownloadedAppArchive(downloadedFile)
-            NSApp.terminate(nil)
+            Task { @MainActor [weak self] in
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        try UpdateService.installDownloadedAppArchive(downloadedFile)
+                    }.value
+                    NSApp.terminate(nil)
+                } catch {
+                    self?.statusText = error.localizedDescription
+                    self?.isInstalling = false
+                    self?.isSheetPresented = true
+                }
+            }
         } catch {
             statusText = error.localizedDescription
             isInstalling = false
@@ -99,6 +126,7 @@ final class UpdateModel: ObservableObject {
             do {
                 let result = try await UpdateService.checkLatestRelease()
                 availability = result
+                clearStaleDownloadedUpdate(for: result)
                 isChecking = false
 
                 if result.isAvailable {
@@ -122,6 +150,7 @@ final class UpdateModel: ObservableObject {
             do {
                 downloadedFile = try await UpdateService.downloadRelease(release)
                 downloadedFileIsInstallable = true
+                downloadedReleaseIdentity = release.downloadIdentity
                 statusText = "Installing version \(release.version)..."
                 isDownloading = false
                 installDownloadedUpdate()
@@ -133,8 +162,23 @@ final class UpdateModel: ObservableObject {
     }
 
     private func upToDateStatusText() -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        return "TokenMeter is up to date. Checked at \(formatter.string(from: Date()))."
+        "TokenMeter is up to date. Checked at \(statusTimeFormatter.string(from: Date()))."
+    }
+
+    private func clearStaleDownloadedUpdate(for availability: UpdateAvailability) {
+        guard downloadedFileIsInstallable else { return }
+        guard availability.isAvailable,
+              downloadedReleaseIdentity == availability.release.downloadIdentity,
+              let downloadedFile,
+              FileManager.default.fileExists(atPath: downloadedFile.path) else {
+            clearDownloadedUpdate()
+            return
+        }
+    }
+
+    private func clearDownloadedUpdate() {
+        downloadedFile = nil
+        downloadedFileIsInstallable = false
+        downloadedReleaseIdentity = nil
     }
 }

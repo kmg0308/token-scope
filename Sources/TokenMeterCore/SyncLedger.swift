@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
 
+private typealias SyncLedgerLineBytes = Slice<UnsafeBufferPointer<UInt8>>
+
 public final class TokenSyncLedgerStore: @unchecked Sendable {
     private let folder: URL
     private let localDevice: TokenDeviceMetadata
@@ -70,33 +72,61 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         try fileManager.createDirectory(at: devicesURL, withIntermediateDirectories: true)
         let localLedgerURL = devicesURL.appendingPathComponent("\(safeFileName(localDevice.id)).jsonl")
 
-        var recordsByKey: [String: SyncLedgerRecord] = [:]
-        for event in events where !isCancelled() {
-            let record = SyncLedgerRecord(event: event.withDevice(localDevice))
-            recordsByKey[record.identityKey] = record
-        }
-
         let records: [SyncLedgerRecord]
         if replaceExisting {
-            records = sortedRecords(Array(recordsByKey.values))
+            records = sortedRecords(recordsByKey(for: events, isCancelled: isCancelled).map(\.value))
+            guard !isCancelled() else { return 0 }
             try write(records: records, to: localLedgerURL)
             cacheLedger(records: records, at: localLedgerURL)
             return records.count
         }
 
-        guard !recordsByKey.isEmpty else { return 0 }
+        guard !events.isEmpty else { return 0 }
 
         let cachedKeys = cachedLedgerKeys(for: syncLedgerSnapshot(for: localLedgerURL))
         let existingKeys = cachedKeys
             ?? readIdentityKeys(from: localLedgerURL, isCancelled: isCancelled)
-        records = sortedRecords(recordsByKey.values.filter { !existingKeys.contains($0.identityKey) })
+        guard !isCancelled() else { return 0 }
+        records = sortedRecords(newRecords(from: events, excluding: existingKeys, isCancelled: isCancelled))
         guard !records.isEmpty else { return 0 }
+        guard !isCancelled() else { return 0 }
 
         try append(records: records, to: localLedgerURL)
         if cachedKeys != nil {
             appendLedgerCache(events: records.map(\.tokenEvent), at: localLedgerURL)
         }
         return records.count
+    }
+
+    private func recordsByKey(
+        for events: [TokenEvent],
+        isCancelled: () -> Bool
+    ) -> [String: SyncLedgerRecord] {
+        var recordsByKey: [String: SyncLedgerRecord] = [:]
+        for event in events {
+            guard !isCancelled() else { return recordsByKey }
+            let record = SyncLedgerRecord(event: event.withDevice(localDevice))
+            recordsByKey[record.identityKey] = record
+        }
+        return recordsByKey
+    }
+
+    private func newRecords(
+        from events: [TokenEvent],
+        excluding existingKeys: Set<String>,
+        isCancelled: () -> Bool
+    ) -> [SyncLedgerRecord] {
+        var pendingEventsByKey: [String: TokenEvent] = [:]
+        for event in events {
+            guard !isCancelled() else { return [] }
+            let key = "\(localDevice.id)|\(event.id)"
+            guard !existingKeys.contains(key) else { continue }
+            pendingEventsByKey[key] = event
+        }
+        guard !isCancelled() else { return [] }
+        return pendingEventsByKey.values.map { event in
+            SyncLedgerRecord(event: event.withDevice(localDevice))
+        }
     }
 
     private func sortedRecords(_ records: [SyncLedgerRecord]) -> [SyncLedgerRecord] {
@@ -158,14 +188,22 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
     ) -> (events: [TokenEvent], deviceFileCount: Int, parseErrorCount: Int) {
         let devicesURL = folder.appendingPathComponent("devices", isDirectory: true)
         guard fileManager.fileExists(atPath: devicesURL.path) else {
+            if !isCancelled() {
+                try? cacheStore?.removeMissingOrigins(originKind: .syncLedger, keeping: [])
+            }
             return ([], 0, 0)
         }
 
-        guard let enumerator = fileManager.enumerator(
-            at: devicesURL,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
+        let ledgerURLs: [URL]
+        do {
+            ledgerURLs = try fileManager.contentsOfDirectory(
+                at: devicesURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+            .filter(isRegularJSONLFile)
+            .sorted { $0.path < $1.path }
+        } catch {
             return ([], 0, 1)
         }
 
@@ -173,8 +211,13 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         var fileCount = 0
         var parseErrors = 0
         var ledgerPaths = Set<String>()
+        var completed = true
 
-        for case let url as URL in enumerator where !isCancelled() && url.pathExtension == "jsonl" {
+        for url in ledgerURLs {
+            guard !isCancelled() else {
+                completed = false
+                break
+            }
             fileCount += 1
             ledgerPaths.insert(syncLedgerSnapshot(for: url)?.path ?? url.resolvingSymlinksInPath().path)
             let result = cachedOrReadLedgerEvents(from: url, importedAfter: importedAfter, isCancelled: isCancelled)
@@ -182,10 +225,15 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             events.append(contentsOf: result.events)
         }
 
-        if !ledgerPaths.isEmpty, !isCancelled() {
+        if completed, !isCancelled() {
             try? cacheStore?.removeMissingOrigins(originKind: .syncLedger, keeping: ledgerPaths)
         }
-        return (events, fileCount, parseErrors)
+        return (deduplicatedEvents(events), fileCount, parseErrors)
+    }
+
+    private func isRegularJSONLFile(_ url: URL) -> Bool {
+        guard url.pathExtension == "jsonl" else { return false }
+        return (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
     }
 
     private func cachedOrReadLedgerEvents(
@@ -198,12 +246,90 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             return (cachedEvents, 0)
         }
 
+        if let incrementalEvents = incrementallyReadLedgerEvents(
+            from: url,
+            snapshot: snapshot,
+            importedAfter: importedAfter,
+            isCancelled: isCancelled
+        ) {
+            return incrementalEvents
+        }
+
         let result = readRecords(from: url, importedAfter: importedAfter, isCancelled: isCancelled)
-        let events = result.records.map(\.tokenEvent)
+        let events = deduplicatedEvents(result.records.map(\.tokenEvent))
         if importedAfter == nil, result.completed, result.parseErrorCount == 0 {
             cacheLedger(events: events, at: url)
         }
         return (events, result.parseErrorCount)
+    }
+
+    private func incrementallyReadLedgerEvents(
+        from url: URL,
+        snapshot: TokenEventCacheStore.FileSnapshot?,
+        importedAfter: Date?,
+        isCancelled: () -> Bool
+    ) -> (events: [TokenEvent], parseErrorCount: Int)? {
+        guard let snapshot,
+              let base = try? cacheStore?.incrementalAppendBase(for: snapshot, originKind: .syncLedger) else {
+            return nil
+        }
+
+        let baseSnapshot = TokenEventCacheStore.FileSnapshot(
+            path: snapshot.path,
+            source: snapshot.source,
+            size: base.size,
+            modifiedAt: base.modifiedAt,
+            deviceId: snapshot.deviceId
+        )
+        guard let cachedEvents = cachedLedgerEvents(for: baseSnapshot, importedAfter: importedAfter) else {
+            return nil
+        }
+
+        let result = readRecords(
+            from: url,
+            startOffset: base.size,
+            importedAfter: importedAfter,
+            isCancelled: isCancelled
+        )
+        guard !result.requiresFullRead else {
+            return nil
+        }
+
+        let existingKeys = cachedLedgerKeys(for: baseSnapshot)
+            ?? Set(cachedEvents.map(eventIdentityKey))
+        let newEvents = uniqueNewEvents(
+            from: result.records.map(\.tokenEvent),
+            excludingKeys: existingKeys
+        )
+        let events = cachedEvents + newEvents
+        if importedAfter == nil, result.completed, result.parseErrorCount == 0 {
+            appendLedgerCache(events: newEvents, at: url)
+        }
+        return (events, result.parseErrorCount)
+    }
+
+    private func uniqueNewEvents(from events: [TokenEvent], excludingKeys existingKeys: Set<String>) -> [TokenEvent] {
+        var seenKeys = existingKeys
+        var uniqueEvents: [TokenEvent] = []
+        for event in events {
+            guard seenKeys.insert(eventIdentityKey(event)).inserted else { continue }
+            uniqueEvents.append(event)
+        }
+        return uniqueEvents
+    }
+
+    private func deduplicatedEvents(_ events: [TokenEvent]) -> [TokenEvent] {
+        var seenKeys = Set<String>()
+        var uniqueEvents: [TokenEvent] = []
+        for event in events {
+            guard seenKeys.insert(eventIdentityKey(event)).inserted else { continue }
+            uniqueEvents.append(event)
+        }
+        return uniqueEvents
+    }
+
+    private func eventIdentityKey(_ event: TokenEvent) -> String {
+        "\(event.deviceId)|\(event.id)"
     }
 
     private func cachedLedgerEvents(
@@ -267,69 +393,124 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
 
     private func readRecords(
         from url: URL,
+        startOffset: Int64 = 0,
         importedAfter: Date? = nil,
         isCancelled: () -> Bool
-    ) -> (records: [SyncLedgerRecord], parseErrorCount: Int, completed: Bool) {
+    ) -> (records: [SyncLedgerRecord], parseErrorCount: Int, completed: Bool, requiresFullRead: Bool) {
         let decoder = Self.jsonDecoder
         var records: [SyncLedgerRecord] = []
         var parseErrors = 0
         let importedAfterText = importedAfter.map(Self.string(from:))
 
         do {
-            let completed = try forEachLedgerLine(in: url, isCancelled: isCancelled) { data in
-                if let importedAfterText {
-                    guard let timestamp = jsonStringValue(after: Self.timestampMarker, in: data) else {
-                        parseErrors += 1
+            let completed = try forEachLedgerLine(in: url, startOffset: startOffset, isCancelled: isCancelled) { data in
+                let fastImportDecision: Bool?
+                if let importedAfter, let importedAfterText {
+                    fastImportDecision = timestampPassesFilter(
+                        in: data,
+                        importedAfter: importedAfter,
+                        importedAfterText: importedAfterText
+                    )
+                    if fastImportDecision == false {
                         return
                     }
-                    guard timestamp >= importedAfterText else { return }
+                } else {
+                    fastImportDecision = nil
                 }
                 do {
-                    let record = try decoder.decode(SyncLedgerRecord.self, from: data)
+                    let record = try decoder.decode(SyncLedgerRecord.self, from: Data(data))
+                    if fastImportDecision == nil,
+                       let importedAfter,
+                       record.timestamp < importedAfter {
+                        return
+                    }
                     records.append(record)
                 } catch {
                     parseErrors += 1
                 }
             }
-            return (records, parseErrors, completed)
+            return (records, parseErrors, completed, false)
+        } catch SyncLedgerLineReadError.requiresFullRead {
+            return ([], 0, true, true)
         } catch {
-            return ([], 1, true)
+            return ([], 1, true, false)
         }
+    }
+
+    private func timestampPassesFilter(
+        in data: SyncLedgerLineBytes,
+        importedAfter: Date,
+        importedAfterText: String
+    ) -> Bool? {
+        guard let timestamp = jsonStringValue(after: Self.timestampMarker, in: data) else {
+            return nil
+        }
+        if isCanonicalLedgerTimestamp(timestamp) {
+            return timestamp >= importedAfterText
+        }
+        guard let date = Self.date(from: timestamp) else { return nil }
+        return date >= importedAfter
+    }
+
+    private func isCanonicalLedgerTimestamp(_ value: String) -> Bool {
+        TokenISO8601DateCodec.isCanonicalTimestamp(value)
     }
 
     private func forEachLedgerLine(
         in url: URL,
+        startOffset: Int64 = 0,
         isCancelled: () -> Bool,
-        _ handle: (Data) throws -> Void
+        _ handle: (SyncLedgerLineBytes) throws -> Void
     ) throws -> Bool {
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-        var lineStart = data.startIndex
-        var cursor = data.startIndex
-        var bytesUntilCancelCheck = 0
+        return try data.withUnsafeBytes { rawBuffer in
+            let bytes = rawBuffer.bindMemory(to: UInt8.self)
+            var lineStart = try lineStartOffset(in: bytes, startOffset: startOffset)
+            var cursor = lineStart
+            var bytesUntilCancelCheck = 0
 
-        while cursor < data.endIndex {
-            bytesUntilCancelCheck += 1
-            if bytesUntilCancelCheck >= 16_384 {
-                guard !isCancelled() else { return false }
-                bytesUntilCancelCheck = 0
-            }
-            if data[cursor] == 10 {
-                if lineStart < cursor {
-                    try handle(Data(data[lineStart..<cursor]))
+            while cursor < bytes.count {
+                bytesUntilCancelCheck += 1
+                if bytesUntilCancelCheck >= 16_384 {
+                    guard !isCancelled() else { return false }
+                    bytesUntilCancelCheck = 0
                 }
-                lineStart = data.index(after: cursor)
+                if bytes[cursor] == 10 {
+                    if lineStart < cursor {
+                        try handle(bytes[lineStart..<cursor])
+                    }
+                    lineStart = cursor + 1
+                }
+                cursor += 1
             }
-            cursor = data.index(after: cursor)
-        }
 
-        guard !isCancelled() else { return false }
-        if lineStart < data.endIndex {
-            try handle(Data(data[lineStart..<data.endIndex]))
+            guard !isCancelled() else { return false }
+            if lineStart < bytes.count {
+                try handle(bytes[lineStart..<bytes.count])
+            }
+            return true
         }
-        return true
     }
 
-    private func identityKey(from data: Data) -> String? {
+    private func lineStartOffset(in data: UnsafeBufferPointer<UInt8>, startOffset: Int64) throws -> Int {
+        guard startOffset > 0 else { return 0 }
+        guard startOffset <= Int64(data.count) else {
+            throw SyncLedgerLineReadError.requiresFullRead
+        }
+
+        let offset = Int(startOffset)
+        guard offset < data.count else { return offset }
+        if data[offset] == 10 {
+            return offset + 1
+        }
+        guard offset > 0 else { return 0 }
+        guard data[offset - 1] == 10 else {
+            throw SyncLedgerLineReadError.requiresFullRead
+        }
+        return offset
+    }
+
+    private func identityKey(from data: SyncLedgerLineBytes) -> String? {
         guard let deviceId = jsonStringValue(after: Self.deviceIdMarker, in: data),
               let eventId = jsonStringValue(after: Self.eventIdMarker, in: data) else {
             return nil
@@ -337,9 +518,9 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         return "\(deviceId)|\(eventId)"
     }
 
-    private func jsonStringValue(after marker: Data, in data: Data) -> String? {
-        guard let markerRange = data.range(of: marker) else { return nil }
-        var cursor = markerRange.upperBound
+    private func jsonStringValue(after marker: [UInt8], in data: SyncLedgerLineBytes) -> String? {
+        guard let markerEnd = markerEndIndex(marker, in: data) else { return nil }
+        var cursor = markerEnd
         var bytes: [UInt8] = []
         bytes.reserveCapacity(64)
 
@@ -349,11 +530,32 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
                 return String(bytes: bytes, encoding: .utf8)
             }
             if byte == 0x5C {
-                cursor = data.index(after: cursor)
+                cursor += 1
                 guard cursor < data.endIndex else { return nil }
             }
             bytes.append(data[cursor])
-            cursor = data.index(after: cursor)
+            cursor += 1
+        }
+        return nil
+    }
+
+    private func markerEndIndex(_ marker: [UInt8], in data: SyncLedgerLineBytes) -> Int? {
+        guard !marker.isEmpty, data.count >= marker.count else { return nil }
+        var cursor = data.startIndex
+        let lastStart = data.endIndex - marker.count
+
+        while cursor <= lastStart {
+            if data[cursor] == marker[0] {
+                var matched = true
+                for markerOffset in 1..<marker.count where data[cursor + markerOffset] != marker[markerOffset] {
+                    matched = false
+                    break
+                }
+                if matched {
+                    return cursor + marker.count
+                }
+            }
+            cursor += 1
         }
         return nil
     }
@@ -398,36 +600,14 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         dateCodec.date(from: value)
     }
 
-    private static let dateCodec = SyncLedgerDateCodec()
-    private static let deviceIdMarker = Data(#""device_id":""#.utf8)
-    private static let eventIdMarker = Data(#""event_id":""#.utf8)
-    private static let timestampMarker = Data(#""timestamp":""#.utf8)
+    private static let dateCodec = TokenISO8601DateCodec()
+    private static let deviceIdMarker = Array(#""device_id":""#.utf8)
+    private static let eventIdMarker = Array(#""event_id":""#.utf8)
+    private static let timestampMarker = Array(#""timestamp":""#.utf8)
 }
 
-private final class SyncLedgerDateCodec: @unchecked Sendable {
-    private let lock = NSLock()
-    private let fractionalDateFormatter: ISO8601DateFormatter
-    private let plainDateFormatter: ISO8601DateFormatter
-
-    init() {
-        fractionalDateFormatter = ISO8601DateFormatter()
-        fractionalDateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        plainDateFormatter = ISO8601DateFormatter()
-        plainDateFormatter.formatOptions = [.withInternetDateTime]
-    }
-
-    func string(from date: Date) -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        return fractionalDateFormatter.string(from: date)
-    }
-
-    func date(from value: String) -> Date? {
-        lock.lock()
-        defer { lock.unlock() }
-        return fractionalDateFormatter.date(from: value) ?? plainDateFormatter.date(from: value)
-    }
+private enum SyncLedgerLineReadError: Error {
+    case requiresFullRead
 }
 
 private struct SyncLedgerRecord: Codable, Hashable {

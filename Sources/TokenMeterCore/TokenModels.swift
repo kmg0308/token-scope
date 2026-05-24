@@ -25,6 +25,16 @@ public struct TokenUsage: Codable, Hashable, Sendable {
     public var reasoning: Int
     public var total: Int
 
+    enum CodingKeys: String, CodingKey {
+        case input
+        case cachedInput
+        case cacheCreation
+        case cacheRead
+        case output
+        case reasoning
+        case total
+    }
+
     public init(
         input: Int = 0,
         cachedInput: Int = 0,
@@ -34,27 +44,84 @@ public struct TokenUsage: Codable, Hashable, Sendable {
         reasoning: Int = 0,
         total: Int? = nil
     ) {
-        self.input = max(0, input)
-        self.cachedInput = max(0, cachedInput)
-        self.cacheCreation = max(0, cacheCreation)
-        self.cacheRead = max(0, cacheRead)
-        self.output = max(0, output)
-        self.reasoning = max(0, reasoning)
-        self.total = max(0, total ?? (input + cacheCreation + cacheRead + output))
+        let normalizedInput = Self.nonnegative(input)
+        let normalizedCachedInput = min(Self.nonnegative(cachedInput), normalizedInput)
+        let normalizedCacheCreation = Self.nonnegative(cacheCreation)
+        let normalizedCacheRead = Self.nonnegative(cacheRead)
+        let normalizedOutput = Self.nonnegative(output)
+        let normalizedReasoning = Self.nonnegative(reasoning)
+
+        self.input = normalizedInput
+        self.cachedInput = normalizedCachedInput
+        self.cacheCreation = normalizedCacheCreation
+        self.cacheRead = normalizedCacheRead
+        self.output = normalizedOutput
+        self.reasoning = normalizedReasoning
+        self.total = if let total {
+            Self.nonnegative(total)
+        } else {
+            Self.saturatingSum(normalizedInput, normalizedCacheCreation, normalizedCacheRead, normalizedOutput)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let input = try container.decodeIfPresent(Int.self, forKey: .input) ?? 0
+        let cachedInput = try container.decodeIfPresent(Int.self, forKey: .cachedInput) ?? 0
+        let cacheCreation = try container.decodeIfPresent(Int.self, forKey: .cacheCreation) ?? 0
+        let cacheRead = try container.decodeIfPresent(Int.self, forKey: .cacheRead) ?? 0
+        let output = try container.decodeIfPresent(Int.self, forKey: .output) ?? 0
+        let reasoning = try container.decodeIfPresent(Int.self, forKey: .reasoning) ?? 0
+        let total = try container.decodeIfPresent(Int.self, forKey: .total)
+            .flatMap { $0 > 0 ? $0 : nil }
+
+        self.init(
+            input: input,
+            cachedInput: cachedInput,
+            cacheCreation: cacheCreation,
+            cacheRead: cacheRead,
+            output: output,
+            reasoning: reasoning,
+            total: total
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(input, forKey: .input)
+        try container.encode(cachedInput, forKey: .cachedInput)
+        try container.encode(cacheCreation, forKey: .cacheCreation)
+        try container.encode(cacheRead, forKey: .cacheRead)
+        try container.encode(output, forKey: .output)
+        try container.encode(reasoning, forKey: .reasoning)
+        try container.encode(total, forKey: .total)
     }
 
     public static let zero = TokenUsage()
 
     public func adding(_ other: TokenUsage) -> TokenUsage {
         TokenUsage(
-            input: input + other.input,
-            cachedInput: cachedInput + other.cachedInput,
-            cacheCreation: cacheCreation + other.cacheCreation,
-            cacheRead: cacheRead + other.cacheRead,
-            output: output + other.output,
-            reasoning: reasoning + other.reasoning,
-            total: total + other.total
+            input: Self.saturatingAdd(Self.nonnegative(input), Self.nonnegative(other.input)),
+            cachedInput: Self.saturatingAdd(Self.nonnegative(cachedInput), Self.nonnegative(other.cachedInput)),
+            cacheCreation: Self.saturatingAdd(Self.nonnegative(cacheCreation), Self.nonnegative(other.cacheCreation)),
+            cacheRead: Self.saturatingAdd(Self.nonnegative(cacheRead), Self.nonnegative(other.cacheRead)),
+            output: Self.saturatingAdd(Self.nonnegative(output), Self.nonnegative(other.output)),
+            reasoning: Self.saturatingAdd(Self.nonnegative(reasoning), Self.nonnegative(other.reasoning)),
+            total: Self.saturatingAdd(Self.nonnegative(total), Self.nonnegative(other.total))
         )
+    }
+
+    private static func nonnegative(_ value: Int) -> Int {
+        max(0, value)
+    }
+
+    private static func saturatingSum(_ values: Int...) -> Int {
+        values.reduce(0) { saturatingAdd($0, $1) }
+    }
+
+    private static func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {
+        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? Int.max : sum
     }
 
     public func displayComponents(source: TokenSource) -> [TokenComponent] {
@@ -66,10 +133,10 @@ public struct TokenUsage: Codable, Hashable, Sendable {
             cache = cachedInput
         case .claude:
             plainInput = input
-            cache = cacheCreation + cacheRead
+            cache = Self.saturatingAdd(cacheCreation, cacheRead)
         case .all:
             plainInput = max(0, input - cachedInput)
-            cache = cachedInput + cacheCreation + cacheRead
+            cache = Self.saturatingSum(cachedInput, cacheCreation, cacheRead)
         }
 
         let visibleOutput = max(0, output - reasoning)
@@ -106,6 +173,19 @@ public struct TokenEvent: Identifiable, Codable, Hashable, Sendable {
     public var usage: TokenUsage
     public var rawFilePath: String
 
+    enum CodingKeys: String, CodingKey {
+        case id
+        case source
+        case timestamp
+        case deviceId
+        case deviceName
+        case projectPath
+        case sessionId
+        case model
+        case usage
+        case rawFilePath
+    }
+
     public init(
         id: String,
         source: TokenSource,
@@ -128,6 +208,22 @@ public struct TokenEvent: Identifiable, Codable, Hashable, Sendable {
         self.model = model.isEmpty ? "Unknown" : model
         self.usage = usage
         self.rawFilePath = rawFilePath
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            source: try container.decode(TokenSource.self, forKey: .source),
+            timestamp: try container.decode(Date.self, forKey: .timestamp),
+            deviceId: try container.decodeIfPresent(String.self, forKey: .deviceId) ?? TokenDeviceMetadata.localFallback.id,
+            deviceName: try container.decodeIfPresent(String.self, forKey: .deviceName) ?? TokenDeviceMetadata.localFallback.name,
+            projectPath: try container.decodeIfPresent(String.self, forKey: .projectPath) ?? "Unknown",
+            sessionId: try container.decodeIfPresent(String.self, forKey: .sessionId) ?? "Unknown",
+            model: try container.decodeIfPresent(String.self, forKey: .model) ?? "Unknown",
+            usage: try container.decode(TokenUsage.self, forKey: .usage),
+            rawFilePath: try container.decode(String.self, forKey: .rawFilePath)
+        )
     }
 
     public func withDevice(_ device: TokenDeviceMetadata) -> TokenEvent {
@@ -268,14 +364,12 @@ public struct TimeBucket: Identifiable, Hashable, Sendable {
 public struct GroupedUsageRow: Identifiable, Hashable, Sendable {
     public var id: String { key }
     public var key: String
-    public var source: TokenSource
     public var usage: TokenUsage
     public var count: Int
     public var lastActive: Date
 
-    public init(key: String, source: TokenSource = .all, usage: TokenUsage, count: Int, lastActive: Date) {
+    public init(key: String, usage: TokenUsage, count: Int, lastActive: Date) {
         self.key = key
-        self.source = source
         self.usage = usage
         self.count = count
         self.lastActive = lastActive

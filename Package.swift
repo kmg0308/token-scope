@@ -23,8 +23,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "TokenMeterSelfTest",
-            dependencies: ["TokenMeterCore"],
+            dependencies: ["TokenMeterSelfTestSupport"],
             path: "Sources/TokenMeterSelfTest"
+        ),
+        .target(
+            name: "TokenMeterSelfTestSupport",
+            dependencies: ["TokenMeterCore"],
+            path: "Sources/TokenMeterSelfTestSupport"
         )
     ]
 )

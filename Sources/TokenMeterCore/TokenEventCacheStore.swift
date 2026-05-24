@@ -2,7 +2,8 @@ import Foundation
 import SQLite3
 
 public final class TokenEventCacheStore: @unchecked Sendable {
-    static let parserVersion = 1
+    static let parserVersion = 3
+    private static let timestampTolerance: TimeInterval = 0.000_001
 
     struct FileSnapshot {
         var path: String
@@ -22,10 +23,27 @@ public final class TokenEventCacheStore: @unchecked Sendable {
                   let modifiedAt = attributes[.modificationDate] as? Date else {
                 return nil
             }
+            let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
             return FileSnapshot(
                 path: path,
                 source: source,
-                size: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
+                size: size,
+                modifiedAt: modifiedAt,
+                deviceId: deviceId
+            )
+        }
+
+        static func make(
+            for url: URL,
+            source: TokenSource?,
+            deviceId: String?,
+            size: Int64,
+            modifiedAt: Date
+        ) -> FileSnapshot {
+            return FileSnapshot(
+                path: url.resolvingSymlinksInPath().path,
+                source: source,
+                size: size,
                 modifiedAt: modifiedAt,
                 deviceId: deviceId
             )
@@ -138,6 +156,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
                   metadata.source == snapshot.source,
                   !metadata.parseError,
                   metadata.size > 0,
+                  snapshot.modifiedAt.timeIntervalSince1970 + Self.timestampTolerance >= metadata.modifiedAt,
                   snapshot.size > metadata.size else {
                 return nil
             }
@@ -148,29 +167,22 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
-    func events(modifiedAfter: Date? = nil) throws -> [TokenEvent] {
+    func events(modifiedAfter: Date? = nil, syncLedgerPaths: Set<String>? = nil) throws -> [TokenEvent] {
         try locked {
-            let sql: String
-            if modifiedAfter == nil {
-                sql = """
-                SELECT event_json, device_id, event_id, priority
-                FROM event_records
-                ORDER BY timestamp ASC, event_id ASC, priority ASC
-                """
-            } else {
-                sql = """
-                SELECT event_json, device_id, event_id, priority
-                FROM event_records
-                WHERE timestamp >= ?
-                ORDER BY timestamp ASC, event_id ASC, priority ASC
-                """
-            }
+            let query = eventsQuery(modifiedAfter: modifiedAfter, syncLedgerPaths: syncLedgerPaths)
 
             var statement: OpaquePointer?
-            try prepare(sql, into: &statement)
+            try prepare(query.sql, into: &statement)
             defer { sqlite3_finalize(statement) }
-            if let modifiedAfter {
-                sqlite3_bind_double(statement, 1, modifiedAfter.timeIntervalSince1970)
+
+            for (index, value) in query.bindings.enumerated() {
+                let bindingIndex = Int32(index + 1)
+                switch value {
+                case .double(let double):
+                    sqlite3_bind_double(statement, bindingIndex, double)
+                case .string(let string):
+                    bind(string, to: statement, at: bindingIndex)
+                }
             }
 
             var eventsByKey: [String: (event: TokenEvent, priority: Int)] = [:]
@@ -203,6 +215,69 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
+    func eventRecordCount(
+        originKind: OriginKind,
+        paths: Set<String>,
+        modifiedAfter: Date? = nil
+    ) throws -> Int {
+        try locked {
+            guard !paths.isEmpty else { return 0 }
+            let sortedPaths = paths.sorted()
+            let placeholders = Array(repeating: "?", count: sortedPaths.count).joined(separator: ", ")
+            let timestampClause = modifiedAfter == nil ? "" : " AND timestamp >= ?"
+            var statement: OpaquePointer?
+            try prepare(
+                """
+                SELECT COUNT(DISTINCT device_id || char(31) || event_id)
+                FROM event_records
+                WHERE origin_kind = ? AND origin_path IN (\(placeholders))\(timestampClause)
+                """,
+                into: &statement
+            )
+            defer { sqlite3_finalize(statement) }
+            bind(originKind.rawValue, to: statement, at: 1)
+            for (index, path) in sortedPaths.enumerated() {
+                bind(path, to: statement, at: Int32(index + 2))
+            }
+            if let modifiedAfter {
+                sqlite3_bind_double(statement, Int32(sortedPaths.count + 2), modifiedAfter.timeIntervalSince1970)
+            }
+            guard sqlite3_step(statement) == SQLITE_ROW else {
+                return 0
+            }
+            return Int(clamping: sqlite3_column_int64(statement, 0))
+        }
+    }
+
+    private func eventsQuery(modifiedAfter: Date?, syncLedgerPaths: Set<String>?) -> SQLQuery {
+        var clauses: [String] = ["origin_kind = ?"]
+        var bindings: [SQLBinding] = [.string(OriginKind.localLog.rawValue)]
+
+        if let syncLedgerPaths, !syncLedgerPaths.isEmpty {
+            let paths = syncLedgerPaths.sorted()
+            let placeholders = Array(repeating: "?", count: paths.count).joined(separator: ", ")
+            clauses.append("(origin_kind = ? AND origin_path IN (\(placeholders)))")
+            bindings.append(.string(OriginKind.syncLedger.rawValue))
+            bindings.append(contentsOf: paths.map(SQLBinding.string))
+        }
+
+        var whereClause = "WHERE (\(clauses.joined(separator: " OR ")))"
+        if let modifiedAfter {
+            whereClause += " AND timestamp >= ?"
+            bindings.append(.double(modifiedAfter.timeIntervalSince1970))
+        }
+
+        return SQLQuery(
+            sql: """
+            SELECT event_json, device_id, event_id, priority
+            FROM event_records
+            \(whereClause)
+            ORDER BY timestamp ASC, event_id ASC, priority ASC
+            """,
+            bindings: bindings
+        )
+    }
+
     func replaceEvents(
         _ events: [TokenEvent],
         for snapshot: FileSnapshot,
@@ -213,11 +288,15 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             try transaction {
                 try deleteOrigin(originKind: originKind, path: snapshot.path)
                 try deleteOriginFile(originKind: originKind, path: snapshot.path)
-                try insertOriginFile(snapshot: snapshot, originKind: originKind, parseError: parseError, eventCount: events.count)
+                try saveOriginFile(
+                    snapshot: snapshot,
+                    originKind: originKind,
+                    parseError: parseError,
+                    eventCount: events.count,
+                    replaceExisting: false
+                )
                 if !parseError {
-                    for event in events {
-                        try insertEvent(event, originKind: originKind, originPath: snapshot.path)
-                    }
+                    try insertEvents(events, originKind: originKind, originPath: snapshot.path)
                 }
             }
         }
@@ -231,15 +310,14 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         try locked {
             try transaction {
                 let existingCount = try eventCount(originKind: originKind, path: snapshot.path)
-                try upsertOriginFile(
+                try saveOriginFile(
                     snapshot: snapshot,
                     originKind: originKind,
                     parseError: false,
-                    eventCount: existingCount + events.count
+                    eventCount: existingCount + events.count,
+                    replaceExisting: true
                 )
-                for event in events {
-                    try insertEvent(event, originKind: originKind, originPath: snapshot.path)
-                }
+                try insertEvents(events, originKind: originKind, originPath: snapshot.path)
             }
         }
     }
@@ -314,6 +392,12 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             )
             try execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_event_records_origin_time
+                ON event_records(origin_kind, origin_path, timestamp, event_id)
+                """
+            )
+            try execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_event_records_timestamp
                 ON event_records(timestamp)
                 """
@@ -365,7 +449,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
 
     private func metadataMatches(_ metadata: FileMetadata, snapshot: FileSnapshot) -> Bool {
         metadata.size == snapshot.size
-            && abs(metadata.modifiedAt - snapshot.modifiedAt.timeIntervalSince1970) < 0.000_001
+            && abs(metadata.modifiedAt - snapshot.modifiedAt.timeIntervalSince1970) < Self.timestampTolerance
             && metadata.parserVersion == Self.parserVersion
             && metadata.deviceId == snapshot.deviceId
             && metadata.source == snapshot.source
@@ -431,16 +515,18 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         return paths
     }
 
-    private func insertOriginFile(
+    private func saveOriginFile(
         snapshot: FileSnapshot,
         originKind: OriginKind,
         parseError: Bool,
-        eventCount: Int
+        eventCount: Int,
+        replaceExisting: Bool
     ) throws {
+        let insertClause = replaceExisting ? "INSERT OR REPLACE INTO" : "INSERT INTO"
         var statement: OpaquePointer?
         try prepare(
             """
-            INSERT INTO origin_files (
+            \(insertClause) origin_files (
                 origin_kind, origin_path, source, file_size, modified_at,
                 parser_version, device_id, parse_error, event_count,
                 first_event_at, last_event_at, scanned_at
@@ -457,44 +543,13 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         sqlite3_bind_int(statement, 6, Int32(Self.parserVersion))
         bind(snapshot.deviceId, to: statement, at: 7)
         sqlite3_bind_int(statement, 8, parseError ? 1 : 0)
-        sqlite3_bind_int(statement, 9, Int32(eventCount))
+        sqlite3_bind_int64(statement, 9, Int64(eventCount))
         sqlite3_bind_double(statement, 10, Date().timeIntervalSince1970)
         try stepDone(statement)
     }
 
-    private func upsertOriginFile(
-        snapshot: FileSnapshot,
-        originKind: OriginKind,
-        parseError: Bool,
-        eventCount: Int
-    ) throws {
-        var statement: OpaquePointer?
-        try prepare(
-            """
-            INSERT OR REPLACE INTO origin_files (
-                origin_kind, origin_path, source, file_size, modified_at,
-                parser_version, device_id, parse_error, event_count,
-                first_event_at, last_event_at, scanned_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
-            """,
-            into: &statement
-        )
-        defer { sqlite3_finalize(statement) }
-        bind(originKind.rawValue, to: statement, at: 1)
-        bind(snapshot.path, to: statement, at: 2)
-        bind(snapshot.source?.rawValue, to: statement, at: 3)
-        sqlite3_bind_int64(statement, 4, snapshot.size)
-        sqlite3_bind_double(statement, 5, snapshot.modifiedAt.timeIntervalSince1970)
-        sqlite3_bind_int(statement, 6, Int32(Self.parserVersion))
-        bind(snapshot.deviceId, to: statement, at: 7)
-        sqlite3_bind_int(statement, 8, parseError ? 1 : 0)
-        sqlite3_bind_int(statement, 9, Int32(eventCount))
-        sqlite3_bind_double(statement, 10, Date().timeIntervalSince1970)
-        try stepDone(statement)
-    }
-
-    private func insertEvent(_ event: TokenEvent, originKind: OriginKind, originPath: String) throws {
-        let data = try Self.encoder.encode(event)
+    private func insertEvents(_ events: [TokenEvent], originKind: OriginKind, originPath: String) throws {
+        guard !events.isEmpty else { return }
         var statement: OpaquePointer?
         try prepare(
             """
@@ -506,17 +561,23 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             into: &statement
         )
         defer { sqlite3_finalize(statement) }
-        bind(originKind.rawValue, to: statement, at: 1)
-        bind(originPath, to: statement, at: 2)
-        bind(event.deviceId, to: statement, at: 3)
-        bind(event.id, to: statement, at: 4)
-        sqlite3_bind_double(statement, 5, event.timestamp.timeIntervalSince1970)
-        bind(event.source.rawValue, to: statement, at: 6)
-        sqlite3_bind_int(statement, 7, Int32(originKind == .localLog ? 2 : 1))
-        _ = data.withUnsafeBytes { buffer in
-            sqlite3_bind_blob(statement, 8, buffer.baseAddress, Int32(data.count), transient)
+
+        for event in events {
+            let data = try Self.encoder.encode(event)
+            bind(originKind.rawValue, to: statement, at: 1)
+            bind(originPath, to: statement, at: 2)
+            bind(event.deviceId, to: statement, at: 3)
+            bind(event.id, to: statement, at: 4)
+            sqlite3_bind_double(statement, 5, event.timestamp.timeIntervalSince1970)
+            bind(event.source.rawValue, to: statement, at: 6)
+            sqlite3_bind_int(statement, 7, Int32(originKind == .localLog ? 2 : 1))
+            _ = data.withUnsafeBytes { buffer in
+                sqlite3_bind_blob(statement, 8, buffer.baseAddress, Int32(data.count), transient)
+            }
+            try stepDone(statement)
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
         }
-        try stepDone(statement)
     }
 
     private func deleteOrigin(originKind: OriginKind, path: String) throws {
@@ -556,7 +617,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         guard sqlite3_step(statement) == SQLITE_ROW else {
             return 0
         }
-        return Int(sqlite3_column_int(statement, 0))
+        return Int(clamping: sqlite3_column_int64(statement, 0))
     }
 
     private func transaction(_ body: () throws -> Void) throws {
@@ -625,4 +686,14 @@ public final class TokenEventCacheStore: @unchecked Sendable {
 private struct CacheError: Error, CustomStringConvertible {
     var message: String
     var description: String { message }
+}
+
+private struct SQLQuery {
+    var sql: String
+    var bindings: [SQLBinding]
+}
+
+private enum SQLBinding {
+    case double(Double)
+    case string(String)
 }

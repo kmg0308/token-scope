@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-release:
     runs-on: macos-26
@@ -22,11 +26,11 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Build app, ZIP, and PKG
+      - name: Build and verify app, ZIP, and PKG
         run: |
           VERSION="0.1.${GITHUB_RUN_NUMBER}"
           BUILD_COMMIT="${GITHUB_SHA:0:7}"
-          VERSION="$VERSION" BUILD_NUMBER="$GITHUB_RUN_NUMBER" BUILD_COMMIT="$BUILD_COMMIT" DEFAULT_REPOSITORY="$GITHUB_REPOSITORY" ./scripts/package.sh
+          VERSION="$VERSION" BUILD_NUMBER="$GITHUB_RUN_NUMBER" BUILD_COMMIT="$BUILD_COMMIT" ./scripts/verify.sh
 
       - name: Publish GitHub Release
         env:

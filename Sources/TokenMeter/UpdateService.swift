@@ -1,42 +1,14 @@
 import Foundation
-
-struct GitHubRepository: Equatable {
-    let owner: String
-    let name: String
-
-    var apiBase: URL {
-        URL(string: "https://api.github.com/repos/\(owner)/\(name)")!
-    }
-}
-
-struct ReleaseInfo: Equatable {
-    let version: String
-    let displayName: String
-    let zipURL: URL
-    let htmlURL: URL?
-    let targetCommitish: String
-}
-
-struct UpdateAvailability: Equatable {
-    let currentVersion: String
-    let release: ReleaseInfo
-
-    var isAvailable: Bool {
-        let installedCommit = UpdateService.installedBuildCommit()
-        if installedCommit != "dev",
-           !release.targetCommitish.isEmpty,
-           !release.targetCommitish.hasPrefix(installedCommit) {
-            return true
-        }
-        return UpdateService.compareVersions(release.version, currentVersion) == .orderedDescending
-    }
-}
+import TokenMeterCore
 
 enum UpdateServiceError: LocalizedError {
     case invalidResponse
     case noDownloadURL
     case noDownloadedFile
     case notAnAppBundle
+    case invalidDownloadedArchive(String)
+    case invalidDownloadedAppBundle(String)
+    case invalidCodeSignature(String)
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +20,12 @@ enum UpdateServiceError: LocalizedError {
             "Download a release ZIP first."
         case .notAnAppBundle:
             "Updates can only install into a packaged .app build."
+        case .invalidDownloadedArchive(let message):
+            "Downloaded update archive is invalid: \(message)"
+        case .invalidDownloadedAppBundle(let message):
+            "Downloaded app bundle is invalid: \(message)"
+        case .invalidCodeSignature(let message):
+            "Downloaded app code signature is invalid: \(message)"
         }
     }
 }
@@ -57,14 +35,22 @@ enum UpdateService {
 
     static func checkLatestRelease() async throws -> UpdateAvailability {
         let release = try await latestRelease(repository: repository)
-        return UpdateAvailability(currentVersion: installedVersion(), release: release)
+        return UpdateAvailability(
+            currentVersion: installedVersion(),
+            installedBuildCommit: installedBuildCommit(),
+            release: release
+        )
     }
 
     static func downloadRelease(_ release: ReleaseInfo) async throws -> URL {
-        try await download(url: release.zipURL, suggestedName: "TokenMeter-\(release.version).zip")
+        try await download(
+            url: release.zipURL,
+            suggestedName: UpdateReleasePolicy.tokenMeterZipDownloadName(version: release.version)
+        )
     }
 
     static func installDownloadedAppArchive(_ zipURL: URL) throws {
+        try validateDownloadedAppArchive(zipURL)
         let targetApp = installTargetAppURL()
         guard targetApp.pathExtension == "app" else {
             throw UpdateServiceError.notAnAppBundle
@@ -95,6 +81,11 @@ enum UpdateService {
         exec >> "$LOG" 2>&1
         /bin/echo "[$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')] Starting update for $TARGET from $ZIP"
 
+        plist_flag_enabled() {
+            local value="${1:l}"
+            [[ "$value" == "true" || "$value" == "yes" || "$value" == "1" ]]
+        }
+
         cleanup() {
             /bin/rm -rf "$WORK" "$TMP_TARGET"
             /bin/rm -f "$SCRIPT"
@@ -104,8 +95,8 @@ enum UpdateService {
         /usr/bin/find "$TARGET_PARENT" -maxdepth 1 \\( -name "$TARGET_NAME.new.*" -o -name "$TARGET_NAME.old.*" -o -name ".$TARGET_NAME.old.*" \\) -exec /bin/rm -rf {} + 2>/dev/null || true
 
         /usr/bin/ditto -x -k "$ZIP" "$WORK"
-        NEW_APP="$(/usr/bin/find "$WORK" -maxdepth 3 -type d -name 'TokenMeter.app' | /usr/bin/head -n 1)"
-        if [[ -z "$NEW_APP" ]]; then
+        NEW_APP="$WORK/TokenMeter.app"
+        if [[ ! -d "$NEW_APP" ]]; then
             /bin/echo "TokenMeter.app was not found in archive." >&2
             exit 2
         fi
@@ -116,11 +107,41 @@ enum UpdateService {
 
         BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
         EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
-        if [[ "$BUNDLE_ID" != "local.tokenmeter.app" || "$EXECUTABLE" != "TokenMeter" ]]; then
+        if [[ "$BUNDLE_ID" != "\(UpdateReleasePolicy.tokenMeterBundleIdentifier)" || "$EXECUTABLE" != "\(UpdateReleasePolicy.tokenMeterExecutableName)" ]]; then
             /bin/echo "Downloaded app bundle identity is invalid: $BUNDLE_ID / $EXECUTABLE" >&2
             exit 5
         fi
-        if [[ ! -x "$TMP_TARGET/Contents/MacOS/TokenMeter" ]]; then
+        BUNDLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
+        if [[ "$BUNDLE_NAME" != "\(UpdateReleasePolicy.tokenMeterAppName)" ]]; then
+            /bin/echo "Downloaded app bundle name is invalid: $BUNDLE_NAME" >&2
+            exit 10
+        fi
+        PACKAGE_TYPE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
+        if [[ "$PACKAGE_TYPE" != "APPL" ]]; then
+            /bin/echo "Downloaded app package type is invalid: $PACKAGE_TYPE" >&2
+            exit 11
+        fi
+        SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
+        if [[ -z "${SHORT_VERSION//[[:space:]]/}" ]]; then
+            /bin/echo "Downloaded app version is missing." >&2
+            exit 12
+        fi
+        BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
+        if [[ -z "${BUILD_VERSION//[[:space:]]/}" ]]; then
+            /bin/echo "Downloaded app build number is missing." >&2
+            exit 13
+        fi
+        LSUI_ELEMENT="$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
+        if plist_flag_enabled "$LSUI_ELEMENT"; then
+            /bin/echo "Downloaded app must not be a menu-bar-only app." >&2
+            exit 8
+        fi
+        LS_BACKGROUND_ONLY="$(/usr/libexec/PlistBuddy -c 'Print :LSBackgroundOnly' "$TMP_TARGET/Contents/Info.plist" 2>/dev/null || true)"
+        if plist_flag_enabled "$LS_BACKGROUND_ONLY"; then
+            /bin/echo "Downloaded app must not be a background-only app." >&2
+            exit 9
+        fi
+        if [[ ! -x "$TMP_TARGET/Contents/MacOS/\(UpdateReleasePolicy.tokenMeterExecutableName)" ]]; then
             /bin/echo "Downloaded app executable is missing." >&2
             exit 6
         fi
@@ -216,7 +237,7 @@ enum UpdateService {
     }
 
     static func installedBuildCommit() -> String {
-        Bundle.main.object(forInfoDictionaryKey: "TSBuildCommit") as? String ?? "dev"
+        Bundle.main.object(forInfoDictionaryKey: "TokenMeterBuildCommit") as? String ?? "dev"
     }
 
     static func installedVersion() -> String {
@@ -231,17 +252,42 @@ enum UpdateService {
         return bundleURL
     }
 
-    static func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
-        let left = versionParts(lhs)
-        let right = versionParts(rhs)
-        let count = max(left.count, right.count)
-        for index in 0..<count {
-            let a = index < left.count ? left[index] : 0
-            let b = index < right.count ? right[index] : 0
-            if a > b { return .orderedDescending }
-            if a < b { return .orderedAscending }
+    private static func validateDownloadedAppArchive(_ zipURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: zipURL.path) else {
+            throw UpdateServiceError.noDownloadedFile
         }
-        return .orderedSame
+
+        let workURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tokenmeter-update-preflight-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: workURL)
+        }
+
+        do {
+            try runProcess(
+                executable: "/usr/bin/ditto",
+                arguments: ["-x", "-k", zipURL.path, workURL.path]
+            )
+        } catch {
+            throw UpdateServiceError.invalidDownloadedArchive(String(describing: error))
+        }
+
+        let appURL = workURL.appendingPathComponent("TokenMeter.app", isDirectory: true)
+        do {
+            try UpdateReleasePolicy.validateTokenMeterAppBundle(at: appURL)
+        } catch {
+            throw UpdateServiceError.invalidDownloadedAppBundle(String(describing: error))
+        }
+
+        do {
+            try runProcess(
+                executable: "/usr/bin/codesign",
+                arguments: ["--verify", "--deep", "--strict", appURL.path]
+            )
+        } catch {
+            throw UpdateServiceError.invalidCodeSignature(String(describing: error))
+        }
     }
 
     private static func latestRelease(repository: GitHubRepository) async throws -> ReleaseInfo {
@@ -265,7 +311,7 @@ enum UpdateService {
         let htmlURL = (dict["html_url"] as? String).flatMap(URL.init(string:))
         let targetCommitish = (dict["target_commitish"] as? String) ?? ""
         return ReleaseInfo(
-            version: normalizedVersion(tag),
+            version: UpdateReleasePolicy.normalizedVersion(tag),
             displayName: displayName,
             zipURL: downloadURL,
             htmlURL: htmlURL,
@@ -288,13 +334,7 @@ enum UpdateService {
         assets.first { asset in
             assetName(asset) == "tokenmeter.zip"
         } ?? assets.first { asset in
-            let name = assetName(asset)
-            return name.hasPrefix("tokenmeter-") && name.hasSuffix(".zip")
-        } ?? assets.first { asset in
-            let name = assetName(asset)
-            return name.hasSuffix(".zip") && name.contains("tokenmeter")
-        } ?? assets.first { asset in
-            assetName(asset).hasSuffix(".zip")
+            UpdateReleasePolicy.isInstallableTokenMeterZipAssetName(assetName(asset))
         }
     }
 
@@ -311,31 +351,52 @@ enum UpdateService {
         }
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
-        let destination = downloads.appendingPathComponent(suggestedName)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
+        let destination = availableDownloadURL(in: downloads, suggestedName: suggestedName)
         try FileManager.default.copyItem(at: tempURL, to: destination)
         return destination
+    }
+
+    private static func availableDownloadURL(in directory: URL, suggestedName: String) -> URL {
+        let fileName = URL(fileURLWithPath: suggestedName).lastPathComponent
+        let safeName = fileName.isEmpty ? "TokenMeter.zip" : fileName
+        let base = URL(fileURLWithPath: safeName).deletingPathExtension().lastPathComponent
+        let ext = URL(fileURLWithPath: safeName).pathExtension
+        var candidate = directory.appendingPathComponent(safeName)
+        var suffix = 2
+
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let name = ext.isEmpty ? "\(base)-\(suffix)" : "\(base)-\(suffix).\(ext)"
+            candidate = directory.appendingPathComponent(name)
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private static func runProcess(executable: String, arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let message = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ProcessFailure(message: message ?? "exit \(process.terminationStatus)")
+        }
     }
 
     private static func shellQuote(_ string: String) -> String {
         "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
+}
 
-    private static func normalizedVersion(_ string: String) -> String {
-        var version = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        if version.first == "v" || version.first == "V" {
-            version.removeFirst()
-        }
-        return version
-    }
-
-    private static func versionParts(_ string: String) -> [Int] {
-        normalizedVersion(string)
-            .split { character in
-                character == "." || character == "-" || character == "_"
-            }
-            .map { Int($0) ?? 0 }
-    }
+private struct ProcessFailure: Error, CustomStringConvertible {
+    var message: String
+    var description: String { message }
 }

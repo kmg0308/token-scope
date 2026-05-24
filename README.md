@@ -12,7 +12,7 @@ By default, it does not send prompts, code, messages, or token records to any se
 
 - Main macOS dashboard app with Dock and Cmd+Tab support.
 - Dashboard sections: All, Codex, Claude Code.
-- Time ranges: today, last 12 hours, last 24 hours, 7 days, 30 days, 3/6/12 months.
+- Time ranges: 30 minutes, 1/3/6/12/24 hours, today, yesterday, 7 days, 30 days, 3/6/12 months, and all history.
 - Token views: 1/5/10/20/30 minutes, hourly, daily, weekly, and monthly.
 - Breakdowns by app, token kind, model, project, and session.
 - Local parsing for:
@@ -45,7 +45,7 @@ The first time a Sync Folder is selected, TokenMeter runs a full local scan to s
 ## Build
 
 ```bash
-swift test
+swift run TokenMeterSelfTest
 ./scripts/package.sh
 ```
 

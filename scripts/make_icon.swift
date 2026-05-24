@@ -7,6 +7,9 @@ let fileManager = FileManager.default
 let workURL = fileManager.temporaryDirectory
     .appendingPathComponent("TokenMeterIcon-\(UUID().uuidString)", isDirectory: true)
 let iconsetURL = workURL.appendingPathComponent("TokenMeter.iconset", isDirectory: true)
+defer {
+    try? fileManager.removeItem(at: workURL)
+}
 
 try fileManager.createDirectory(at: iconsetURL, withIntermediateDirectories: true)
 try fileManager.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -41,8 +44,6 @@ process.waitUntilExit()
 if process.terminationStatus != 0 {
     throw NSError(domain: "TokenMeterIcon", code: Int(process.terminationStatus))
 }
-
-try? fileManager.removeItem(at: workURL)
 
 func drawIcon(size: CGFloat) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))

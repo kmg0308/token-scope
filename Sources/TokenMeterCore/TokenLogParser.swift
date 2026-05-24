@@ -16,7 +16,6 @@ public enum TokenLogParser {
         var model = "Unknown"
         var previousTotal: TokenUsage?
         let sessionId = sessionIdFromFileName(url.lastPathComponent)
-        let dateParser = DateParser()
 
         try forEachJSONLine(in: url, startOffset: startOffset, isCancelled: isCancelled) { index, object in
             guard let payload = object["payload"] as? [String: Any] else { return }
@@ -28,13 +27,17 @@ public enum TokenLogParser {
                 model = payloadModel
             }
 
-            let timestamp = dateParser.parse(object["timestamp"] as? String)
-                ?? dateParser.parse(payload["timestamp"] as? String)
-                ?? Date(timeIntervalSince1970: 0)
-
             let totalDict = nestedDict(payload, ["info", "total_token_usage"])
             let lastDict = nestedDict(payload, ["info", "last_token_usage"])
             guard totalDict != nil || lastDict != nil else { return }
+
+            guard let timestamp = dateParser.parse(object["timestamp"] as? String)
+                ?? dateParser.parse(payload["timestamp"] as? String) else {
+                if let totalDict {
+                    previousTotal = codexUsage(from: totalDict)
+                }
+                return
+            }
 
             let usage: TokenUsage?
             if let totalDict {
@@ -80,22 +83,19 @@ public enum TokenLogParser {
     ) throws -> [TokenEvent] {
         var events: [TokenEvent] = []
         var seenRequests = Set<String>()
-        let dateParser = DateParser()
 
         try forEachJSONLine(in: url, startOffset: startOffset, isCancelled: isCancelled) { index, object in
             guard let message = object["message"] as? [String: Any],
                   let usageDict = message["usage"] as? [String: Any] else { return }
 
-            let requestId = object["requestId"] as? String
-            let uuid = object["uuid"] as? String
+            let requestId = nonEmptyString(object["requestId"])
+            let uuid = nonEmptyString(object["uuid"])
             let dedupeKey = requestId ?? uuid ?? "\(url.path)#\(index)"
-            if seenRequests.contains(dedupeKey) { return }
-            seenRequests.insert(dedupeKey)
 
-            let timestamp = dateParser.parse(object["timestamp"] as? String) ?? Date(timeIntervalSince1970: 0)
-            let model = (message["model"] as? String) ?? "Unknown"
-            let projectPath = (object["cwd"] as? String) ?? "Unknown"
-            let sessionId = (object["sessionId"] as? String) ?? sessionIdFromFileName(url.lastPathComponent)
+            guard let timestamp = dateParser.parse(object["timestamp"] as? String) else { return }
+            let model = nonEmptyString(message["model"]) ?? "Unknown"
+            let projectPath = nonEmptyString(object["cwd"]) ?? "Unknown"
+            let sessionId = nonEmptyString(object["sessionId"]) ?? sessionIdFromFileName(url.lastPathComponent)
 
             let usage = TokenUsage(
                 input: intValue(usageDict["input_tokens"]),
@@ -104,6 +104,8 @@ public enum TokenLogParser {
                 output: intValue(usageDict["output_tokens"])
             )
             guard usage.total > 0 else { return }
+            if seenRequests.contains(dedupeKey) { return }
+            seenRequests.insert(dedupeKey)
 
             let id = stableID(parts: ["claude", url.path, dedupeKey])
             events.append(TokenEvent(
@@ -122,12 +124,13 @@ public enum TokenLogParser {
     }
 
     private static func codexUsage(from dict: [String: Any]) -> TokenUsage {
-        TokenUsage(
+        let total = optionalIntValue(dict["total_tokens"]).flatMap { $0 > 0 ? $0 : nil }
+        return TokenUsage(
             input: intValue(dict["input_tokens"]),
             cachedInput: intValue(dict["cached_input_tokens"]),
             output: intValue(dict["output_tokens"]),
             reasoning: intValue(dict["reasoning_output_tokens"]),
-            total: intValue(dict["total_tokens"])
+            total: total
         )
     }
 
@@ -149,13 +152,20 @@ public enum TokenLogParser {
         isCancelled: () -> Bool,
         _ handle: (Int, [String: Any]) throws -> Void
     ) throws {
+        guard !isCancelled() else { return }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
         let startIndex = try lineStartIndex(in: data, startOffset: startOffset)
         var logicalLineIndex = logicalLineCount(in: data, before: startIndex)
         var lineStart = startIndex
         var cursor = startIndex
+        var bytesUntilCancelCheck = 0
 
-        while cursor < data.endIndex, !isCancelled() {
+        while cursor < data.endIndex {
+            bytesUntilCancelCheck += 1
+            if bytesUntilCancelCheck >= 16_384 {
+                guard !isCancelled() else { return }
+                bytesUntilCancelCheck = 0
+            }
             if data[cursor] == 10 {
                 try processJSONLine(data, range: lineStart..<cursor, lineIndex: &logicalLineIndex, handle)
                 lineStart = data.index(after: cursor)
@@ -163,9 +173,8 @@ public enum TokenLogParser {
             cursor = data.index(after: cursor)
         }
 
-        if !isCancelled() {
-            try processJSONLine(data, range: lineStart..<data.endIndex, lineIndex: &logicalLineIndex, handle)
-        }
+        guard !isCancelled() else { return }
+        try processJSONLine(data, range: lineStart..<data.endIndex, lineIndex: &logicalLineIndex, handle)
     }
 
     private static func processJSONLine(
@@ -233,27 +242,29 @@ public enum TokenLogParser {
     }
 
     private static func intValue(_ value: Any?) -> Int {
-        if let int = value as? Int { return int }
-        if let number = value as? NSNumber { return number.intValue }
-        if let string = value as? String { return Int(string) ?? 0 }
-        return 0
+        optionalIntValue(value) ?? 0
     }
 
-    private final class DateParser {
-        private let fractionalFormatter: ISO8601DateFormatter
-        private let plainFormatter: ISO8601DateFormatter
+    private static func optionalIntValue(_ value: Any?) -> Int? {
+        if let string = value as? String { return Int(string) }
+        guard let number = value as? NSNumber else { return nil }
+        guard CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
 
-        init() {
-            fractionalFormatter = ISO8601DateFormatter()
-            fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            plainFormatter = ISO8601DateFormatter()
-            plainFormatter.formatOptions = [.withInternetDateTime]
+        switch String(cString: number.objCType) {
+        case "q", "l", "i", "s", "c":
+            return Int(number.int64Value)
+        case "Q", "L", "I", "S", "C":
+            let value = number.uint64Value
+            guard value <= UInt64(Int.max) else { return nil }
+            return Int(value)
+        default:
+            return nil
         }
+    }
 
-        func parse(_ string: String?) -> Date? {
-            guard let string else { return nil }
-            return fractionalFormatter.date(from: string) ?? plainFormatter.date(from: string)
-        }
+    private static func nonEmptyString(_ value: Any?) -> String? {
+        guard let string = value as? String, !string.isEmpty else { return nil }
+        return string
     }
 
     private static func sessionIdFromFileName(_ fileName: String) -> String {
@@ -265,4 +276,6 @@ public enum TokenLogParser {
         let digest = SHA256.hash(data: Data(rawValue.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
+
+    private static let dateParser = TokenISO8601DateCodec()
 }

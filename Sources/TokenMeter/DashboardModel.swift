@@ -86,7 +86,7 @@ enum DashboardBucketSelection: Hashable, Identifiable {
             .minute
         case .last3Hours:
             .fiveMinutes
-        case .last6Hours:
+        case .last6Hours, .last8Hours:
             .tenMinutes
         case .last12Hours:
             .twentyMinutes
@@ -717,7 +717,7 @@ final class DashboardModel: ObservableObject {
 
     private func scanWindowStart(for range: TimeRangePreset) -> Date? {
         switch range {
-        case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours, .last7Days, .last30Days:
+        case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last8Hours, .last12Hours, .last24Hours, .last7Days, .last30Days:
             return range.previousInterval().start
         case .last3Months, .last6Months, .last12Months:
             return range.previousInterval().start

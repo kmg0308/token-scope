@@ -12,7 +12,7 @@ By default, it does not send prompts, code, messages, or token records to any se
 
 - Main macOS dashboard app with Dock and Cmd+Tab support.
 - Dashboard sections: All, Codex, Claude Code.
-- Time ranges: 30 minutes, 1/3/6/12/24 hours, today, yesterday, 7 days, 30 days, 3/6/12 months, and all history.
+- Time ranges: 30 minutes, 1/3/6/8/12/24 hours, today, yesterday, 7 days, 30 days, 3/6/12 months, and all history.
 - Token views: 1/5/10/20/30 minutes, hourly, daily, weekly, and monthly.
 - Breakdowns by app, token kind, model, project, and session.
 - Local parsing for:

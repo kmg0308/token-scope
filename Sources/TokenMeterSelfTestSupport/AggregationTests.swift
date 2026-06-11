@@ -182,6 +182,10 @@ extension TokenMeterSelfTest {
         let sixHours = TimeRangePreset.last6Hours.interval(now: now, calendar: calendar)
         try expect(sixHours.start == date(year: 2026, month: 5, day: 11, hour: 11, minute: 37, calendar: calendar), "6h start")
         try expect(sixHours.end == now, "6h end")
+
+        let eightHours = TimeRangePreset.last8Hours.interval(now: now, calendar: calendar)
+        try expect(eightHours.start == date(year: 2026, month: 5, day: 11, hour: 9, minute: 37, calendar: calendar), "8h start")
+        try expect(eightHours.end == now, "8h end")
     }
 
     static func previousRangesMatchCurrentDuration() throws {
@@ -290,6 +294,7 @@ extension TokenMeterSelfTest {
             .last1Hour,
             .last3Hours,
             .last6Hours,
+            .last8Hours,
             .last12Hours,
             .last24Hours,
             .today,

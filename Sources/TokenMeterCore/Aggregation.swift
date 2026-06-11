@@ -7,6 +7,7 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
     case last1Hour = "1h"
     case last3Hours = "3h"
     case last6Hours = "6h"
+    case last8Hours = "8h"
     case last12Hours = "12h"
     case last24Hours = "24h"
     case last7Days = "7d"
@@ -23,6 +24,7 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
         .last1Hour,
         .last3Hours,
         .last6Hours,
+        .last8Hours,
         .last12Hours,
         .last24Hours,
         .today,
@@ -57,6 +59,8 @@ public enum TimeRangePreset: String, CaseIterable, Identifiable, Sendable {
             return DateInterval(start: now.addingTimeInterval(-3 * 60 * 60), end: now)
         case .last6Hours:
             return DateInterval(start: now.addingTimeInterval(-6 * 60 * 60), end: now)
+        case .last8Hours:
+            return DateInterval(start: now.addingTimeInterval(-8 * 60 * 60), end: now)
         case .last12Hours:
             return DateInterval(start: now.addingTimeInterval(-12 * 60 * 60), end: now)
         case .last24Hours:

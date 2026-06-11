@@ -721,7 +721,7 @@ struct TokenBarChart: View {
             return "HH:mm"
         case .day:
             switch range {
-            case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last12Hours, .last24Hours:
+            case .today, .yesterday, .last30Minutes, .last1Hour, .last3Hours, .last6Hours, .last8Hours, .last12Hours, .last24Hours:
                 return "HH:mm"
             case .last7Days:
                 return "EEE d"

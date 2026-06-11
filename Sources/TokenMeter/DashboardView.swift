@@ -16,6 +16,7 @@ struct DashboardView: View {
         .last1Hour,
         .last3Hours,
         .last6Hours,
+        .last8Hours,
         .last12Hours,
         .last24Hours
     ]

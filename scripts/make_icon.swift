@@ -82,7 +82,7 @@ func drawIcon(size: CGFloat) -> NSImage {
     let barGap = size * 0.080
     let groupWidth = barWidth * 2 + barGap
     let startX = (size - groupWidth) / 2
-    let baseY = size * 0.235
+    let baseY = size * 0.195
     let heights = [size * 0.430, size * 0.610]
 
     for (index, height) in heights.enumerated() {

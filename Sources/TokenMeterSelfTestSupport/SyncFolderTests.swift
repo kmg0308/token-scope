@@ -20,6 +20,7 @@ extension TokenMeterSelfTest {
         try scannerKeepsSyncedCodexUsageAfterLocalSessionFilesAreRemoved()
         try scannerKeepsMergedDeviceUsageAfterOneMacRemovesLocalSessionFiles()
         try scannerRebuildsMissingLocalSyncLedgerAfterCodexSessionsAreRemoved()
+        try scannerDoesNotEraseExistingCodexLedgerWhenLocalSessionsAndCacheAreGone()
         try scannerRestoresMissingLocalSyncLedgerFromCachedLocalHistory()
         try scannerExcludesCachedSyncEventsWhenSyncFolderIsDisabled()
         try scannerPrunesCachedSyncEventsWhenDeviceLedgerDisappears()
@@ -323,6 +324,44 @@ extension TokenMeterSelfTest {
         try expect(
             try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 1,
             "missing Codex local ledger is rebuilt from cached history"
+        )
+    }
+
+    static func scannerDoesNotEraseExistingCodexLedgerWhenLocalSessionsAndCacheAreGone() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let firstCache = try temporaryCache(in: directory.appendingPathComponent("first-cache", isDirectory: true))
+        let firstScanner = TokenLogScanner(homeDirectory: home, localDevice: device, cacheStore: firstCache)
+        let codexLog = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "session-a.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10,
+            output: 5
+        )
+
+        let initial = firstScanner.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(Aggregation.totalUsage(events: initial.events).total == 15, "initial Codex ledger is exported")
+        try expect(try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 1, "initial Codex ledger line exists")
+
+        try FileManager.default.removeItem(at: codexLog)
+        let emptyCache = try temporaryCache(in: directory.appendingPathComponent("empty-cache", isDirectory: true))
+        let rebuiltScanner = TokenLogScanner(homeDirectory: home, localDevice: device, cacheStore: emptyCache)
+
+        let rebuilt = rebuiltScanner.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(
+            try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 1,
+            "replace sync keeps existing Codex ledger when local sessions and cache are gone"
+        )
+        try expect(
+            Aggregation.totalUsage(events: rebuilt.events).total == 15,
+            "replace sync imports existing Codex ledger instead of erasing it"
         )
     }
 

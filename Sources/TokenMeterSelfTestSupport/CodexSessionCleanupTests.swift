@@ -6,6 +6,7 @@ extension TokenMeterSelfTest {
         try cleanupArchivesOnlyVerifiedOldCodexSessions()
         try cleanupBlocksOldCodexSessionsMissingSyncLedgerRecords()
         try cleanupRequiresCachedCodexSessionRecords()
+        try cleanupRefusesChangedSessionAfterPlan()
     }
 
     static func cleanupArchivesOnlyVerifiedOldCodexSessions() throws {
@@ -103,5 +104,46 @@ extension TokenMeterSelfTest {
         try expect(plan.eligibleFileCount == 0, "cleanup blocks uncached session")
         try expect(plan.uncachedFileCount == 1, "cleanup counts uncached session")
         try expect(FileManager.default.fileExists(atPath: oldLog.path), "cleanup leaves uncached session")
+    }
+
+    static func cleanupRefusesChangedSessionAfterPlan() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let cache = try temporaryCache(in: directory)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+        let oldLog = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "changed-session.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10
+        )
+        try setModificationDate(isoDate("2026-01-01T00:10:00.000Z"), for: oldLog)
+
+        _ = scanner.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        let manager = CodexSessionCleanupManager(homeDirectory: home, cacheStore: cache)
+        let plan = manager.plan(retentionDays: 90, now: isoDate("2026-07-04T00:00:00.000Z"))
+        try expect(plan.eligibleFileCount == 1, "cleanup plan includes changed-session before mutation")
+
+        let handle = try FileHandle(forWritingTo: oldLog)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n{\"timestamp\":\"2026-01-01T00:01:00.000Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"input_tokens\":1,\"cached_input_tokens\":0,\"output_tokens\":0,\"reasoning_output_tokens\":0,\"total_tokens\":1}}}}\n".utf8))
+        try handle.close()
+        try setModificationDate(isoDate("2026-01-01T00:20:00.000Z"), for: oldLog)
+
+        do {
+            _ = try manager.archiveAndRemove(plan)
+            try expect(false, "cleanup refuses session files changed after plan")
+        } catch {
+            try expect(FileManager.default.fileExists(atPath: oldLog.path), "cleanup keeps changed session file")
+        }
     }
 }

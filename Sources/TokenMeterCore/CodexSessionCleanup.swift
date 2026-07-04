@@ -4,11 +4,13 @@ public struct CodexSessionCleanupFile: Hashable, Sendable {
     public var url: URL
     public var size: Int64
     public var eventCount: Int
+    public var modifiedAt: Date
 
-    public init(url: URL, size: Int64, eventCount: Int) {
+    public init(url: URL, size: Int64, eventCount: Int, modifiedAt: Date) {
         self.url = url
         self.size = size
         self.eventCount = eventCount
+        self.modifiedAt = modifiedAt
     }
 }
 
@@ -127,7 +129,8 @@ public final class CodexSessionCleanupManager: @unchecked Sendable {
             eligibleFiles.append(CodexSessionCleanupFile(
                 url: candidate.url,
                 size: candidate.size,
-                eventCount: keys.count
+                eventCount: keys.count,
+                modifiedAt: candidate.modifiedAt
             ))
         }
 
@@ -147,6 +150,7 @@ public final class CodexSessionCleanupManager: @unchecked Sendable {
             throw CleanupError(message: "No verified Codex session files are ready to archive.")
         }
 
+        try validateUnchanged(plan.eligibleFiles)
         let archiveURL = archiveDirectory().appendingPathComponent(archiveFileName(for: plan))
         try createArchive(for: plan.eligibleFiles.map(\.url), at: archiveURL)
         let archivedFileCount = try archivedEntryCount(at: archiveURL)
@@ -154,6 +158,7 @@ public final class CodexSessionCleanupManager: @unchecked Sendable {
             throw CleanupError(message: "Archive verification failed before removing session files.")
         }
 
+        try validateUnchanged(plan.eligibleFiles)
         var removedFileCount = 0
         var removedByteCount: Int64 = 0
         for file in plan.eligibleFiles {
@@ -174,6 +179,18 @@ public final class CodexSessionCleanupManager: @unchecked Sendable {
             removedFileCount: removedFileCount,
             removedByteCount: removedByteCount
         )
+    }
+
+    private func validateUnchanged(_ files: [CodexSessionCleanupFile]) throws {
+        for file in files {
+            guard let current = candidateSnapshot(for: file.url) else {
+                throw CleanupError(message: "Codex session changed before cleanup could finish.")
+            }
+            guard current.size == file.size,
+                  abs(current.modifiedAt.timeIntervalSince(file.modifiedAt)) < 0.000_001 else {
+                throw CleanupError(message: "Codex session changed before cleanup could finish.")
+            }
+        }
     }
 
     private func codexSessionFiles(modifiedBefore cutoff: Date) -> [CandidateFile] {
@@ -198,11 +215,26 @@ public final class CodexSessionCleanupManager: @unchecked Sendable {
                 }
                 files.append(CandidateFile(
                     url: url.resolvingSymlinksInPath(),
-                    size: Int64(values.fileSize ?? 0)
+                    size: Int64(values.fileSize ?? 0),
+                    modifiedAt: modifiedAt
                 ))
             }
             return files
         }
+    }
+
+    private func candidateSnapshot(for url: URL) -> CandidateFile? {
+        let resolved = url.resolvingSymlinksInPath()
+        guard let values = try? resolved.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
+              values.isRegularFile == true,
+              let modifiedAt = values.contentModificationDate else {
+            return nil
+        }
+        return CandidateFile(
+            url: resolved,
+            size: Int64(values.fileSize ?? 0),
+            modifiedAt: modifiedAt
+        )
     }
 
     private func createArchive(for urls: [URL], at archiveURL: URL) throws {
@@ -313,6 +345,7 @@ public final class CodexSessionCleanupManager: @unchecked Sendable {
     private struct CandidateFile {
         var url: URL
         var size: Int64
+        var modifiedAt: Date
     }
 
     private struct CleanupError: Error, LocalizedError {

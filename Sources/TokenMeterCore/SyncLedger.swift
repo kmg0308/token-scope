@@ -76,6 +76,7 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         if replaceExisting {
             records = sortedRecords(recordsByKey(for: events, isCancelled: isCancelled).map(\.value))
             guard !isCancelled() else { return 0 }
+            guard !records.isEmpty else { return 0 }
             try write(records: records, to: localLedgerURL)
             cacheLedger(records: records, at: localLedgerURL)
             return records.count

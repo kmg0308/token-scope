@@ -33,6 +33,11 @@ private struct GroupedRowsCacheKey: Hashable {
     var kind: GroupedRowsKind
 }
 
+private enum SessionCleanupWorkResult {
+    case preview(CodexSessionCleanupPlan, ScanResult)
+    case applied(CodexSessionCleanupResult, ScanResult)
+}
+
 enum DashboardSection: String, CaseIterable, Identifiable {
     case all = "All"
     case codex = "Codex"
@@ -113,6 +118,8 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var deviceFilter = DashboardModel.allDevicesFilterId
     @Published var syncFolderPath: String?
     @Published var isScanning = false
+    @Published var isCleaningSessions = false
+    @Published var sessionCleanupStatusText: String?
     @Published var errorMessage: String?
 
     let localDevice: TokenDeviceMetadata
@@ -127,6 +134,7 @@ final class DashboardModel: ObservableObject {
     private let defaults: UserDefaults
     private let scanner: TokenLogScanner
     private var scanTask: Task<Void, Never>?
+    private var cleanupTask: Task<Void, Never>?
     private var scanGeneration = 0
     private var scanCanDeferForScroll = false
     private var isScrollActive = false
@@ -454,6 +462,100 @@ final class DashboardModel: ObservableObject {
         }
     }
 
+    func previewSessionCleanup() {
+        startSessionCleanup(apply: false)
+    }
+
+    func archiveOldSessions() {
+        startSessionCleanup(apply: true)
+    }
+
+    private func startSessionCleanup(apply: Bool) {
+        guard let syncFolderURL else {
+            errorMessage = "Choose a sync folder before cleaning old Codex sessions."
+            return
+        }
+        guard !isCleaningSessions else { return }
+        scanTask?.cancel()
+        cleanupTask?.cancel()
+
+        let scanner = scanner
+        let actionName = apply ? "Archiving old Codex sessions" : "Checking old Codex sessions"
+        isCleaningSessions = true
+        isScanning = true
+        scanCanDeferForScroll = false
+        errorMessage = nil
+        sessionCleanupStatusText = "\(actionName)..."
+
+        cleanupTask = Task(priority: .background) { @MainActor [weak self] in
+            let worker = Task.detached(priority: .background) {
+                let refreshed = scanner.scan(syncFolder: syncFolderURL, replaceSyncLedger: true)
+                let manager = CodexSessionCleanupManager()
+                let plan = manager.plan(retentionDays: 90)
+                if apply {
+                    guard plan.canApply else {
+                        return SessionCleanupWorkResult.preview(plan, refreshed)
+                    }
+                    let result = try manager.archiveAndRemove(plan)
+                    let verified = scanner.scan(syncFolder: syncFolderURL, replaceSyncLedger: true)
+                    return SessionCleanupWorkResult.applied(result, verified)
+                }
+                return SessionCleanupWorkResult.preview(plan, refreshed)
+            }
+
+            do {
+                let result = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard let self, !Task.isCancelled else { return }
+                self.handleSessionCleanupResult(result)
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.errorMessage = "Could not clean old Codex sessions: \(error.localizedDescription)"
+            }
+
+            guard let self else { return }
+            self.isCleaningSessions = false
+            self.isScanning = false
+            self.scanCanDeferForScroll = false
+            self.cleanupTask = nil
+        }
+    }
+
+    private func handleSessionCleanupResult(_ result: SessionCleanupWorkResult) {
+        switch result {
+        case .preview(let plan, let scan):
+            applyScanResult(scan, eventAfter: nil)
+            sessionCleanupStatusText = cleanupPreviewText(plan)
+        case .applied(let result, let scan):
+            applyScanResult(scan, eventAfter: nil)
+            sessionCleanupStatusText = "Archived \(result.removedFileCount) file(s), freed \(Self.byteText(result.removedByteCount))."
+        }
+    }
+
+    private func cleanupPreviewText(_ plan: CodexSessionCleanupPlan) -> String {
+        if plan.scannedFileCount == 0 {
+            return "No Codex session files are older than \(plan.retentionDays) days."
+        }
+        if plan.eligibleFileCount == 0 {
+            let blocked = plan.unsafeFileCount + plan.uncachedFileCount
+            return "\(blocked) old file(s) are waiting for verified sync ledger records."
+        }
+        let ready = "\(plan.eligibleFileCount) old file(s), \(Self.byteText(plan.eligibleByteCount)) ready to archive."
+        let blocked = plan.unsafeFileCount + plan.uncachedFileCount
+        guard blocked > 0 else { return ready }
+        return "\(ready) \(blocked) waiting."
+    }
+
+    private func applyScanResult(_ result: ScanResult, eventAfter: Date?) {
+        scanResult = result
+        markEventsChanged()
+        markLoadedWindow(eventAfter: eventAfter)
+        normalizeFilters()
+    }
+
     var filteredEvents: [TokenEvent] {
         filteredEvents(source: selectedSection.sourceFilter)
     }
@@ -737,5 +839,9 @@ final class DashboardModel: ObservableObject {
 
         let name = Host.current().localizedName ?? ProcessInfo.processInfo.hostName
         return TokenDeviceMetadata(id: id, name: name)
+    }
+
+    private static func byteText(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 }

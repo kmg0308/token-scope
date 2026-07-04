@@ -510,7 +510,12 @@ struct DashboardView: View {
             DataSourceStatusPanel(
                 statuses: model.scanResult.sourceStatuses,
                 hasEvents: !model.scanResult.events.isEmpty,
-                isScanning: model.isScanning
+                isScanning: model.isScanning,
+                cleanupStatusText: model.sessionCleanupStatusText,
+                isCleaningSessions: model.isCleaningSessions,
+                canCleanSessions: model.isSyncConfigured,
+                previewCleanup: model.previewSessionCleanup,
+                archiveOldSessions: model.archiveOldSessions
             )
         }
     }

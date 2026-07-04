@@ -40,6 +40,11 @@ struct DataSourceStatusPanel: View {
     let statuses: [ScanSourceStatus]
     let hasEvents: Bool
     let isScanning: Bool
+    let cleanupStatusText: String?
+    let isCleaningSessions: Bool
+    let canCleanSessions: Bool
+    let previewCleanup: () -> Void
+    let archiveOldSessions: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -57,8 +62,45 @@ struct DataSourceStatusPanel: View {
                     }
                 }
             }
+
+            if canCleanSessions || cleanupStatusText != nil {
+                Divider()
+                cleanupActions
+            }
         }
         .tokenSurface()
+    }
+
+    private var cleanupActions: some View {
+        HStack(spacing: 10) {
+            if let cleanupStatusText {
+                Text(cleanupStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer()
+
+            Button {
+                previewCleanup()
+            } label: {
+                Label("Preview Cleanup", systemImage: "doc.text.magnifyingglass")
+            }
+            .buttonStyle(TokenPillButtonStyle())
+            .disabled(!canCleanSessions || isScanning || isCleaningSessions)
+
+            Button {
+                archiveOldSessions()
+            } label: {
+                Label("Archive Old Sessions", systemImage: "archivebox")
+            }
+            .buttonStyle(TokenPillButtonStyle(prominent: true))
+            .disabled(!canCleanSessions || isScanning || isCleaningSessions)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     private var emptyMessage: String {

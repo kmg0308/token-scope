@@ -148,6 +148,38 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
+    func codexLocalLogEventKeys(originPath: String) throws -> Set<String>? {
+        try locked {
+            var metadataStatement: OpaquePointer?
+            try prepare(
+                """
+                SELECT parse_error
+                FROM origin_files
+                WHERE origin_kind = ? AND origin_path = ? AND source = ?
+                """,
+                into: &metadataStatement
+            )
+            defer { sqlite3_finalize(metadataStatement) }
+            bind(OriginKind.localLog.rawValue, to: metadataStatement, at: 1)
+            bind(originPath, to: metadataStatement, at: 2)
+            bind(TokenSource.codex.rawValue, to: metadataStatement, at: 3)
+            guard sqlite3_step(metadataStatement) == SQLITE_ROW else {
+                return nil
+            }
+            guard sqlite3_column_int(metadataStatement, 0) == 0 else {
+                return nil
+            }
+
+            return try eventKeys(originKind: .localLog, originPath: originPath, source: .codex)
+        }
+    }
+
+    func syncLedgerEventKeys() throws -> Set<String> {
+        try locked {
+            try eventKeys(originKind: .syncLedger, originPath: nil, source: nil)
+        }
+    }
+
     func incrementalAppendBase(for snapshot: FileSnapshot, originKind: OriginKind) throws -> IncrementalAppendBase? {
         try locked {
             guard let metadata = try metadata(for: snapshot, originKind: originKind),
@@ -501,6 +533,45 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             }
         }
         return events
+    }
+
+    private func eventKeys(
+        originKind: OriginKind,
+        originPath: String?,
+        source: TokenSource?
+    ) throws -> Set<String> {
+        var clauses = ["origin_kind = ?"]
+        var bindings = [originKind.rawValue]
+        if let originPath {
+            clauses.append("origin_path = ?")
+            bindings.append(originPath)
+        }
+        if let source {
+            clauses.append("source = ?")
+            bindings.append(source.rawValue)
+        }
+
+        var statement: OpaquePointer?
+        try prepare(
+            """
+            SELECT device_id, event_id
+            FROM event_records
+            WHERE \(clauses.joined(separator: " AND "))
+            """,
+            into: &statement
+        )
+        defer { sqlite3_finalize(statement) }
+        for (index, binding) in bindings.enumerated() {
+            bind(binding, to: statement, at: Int32(index + 1))
+        }
+
+        var keys = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let deviceId = columnString(statement, 0)
+            let eventId = columnString(statement, 1)
+            keys.insert("\(deviceId)|\(eventId)")
+        }
+        return keys
     }
 
     private func originPaths(originKind: OriginKind, pruningSources: Set<TokenSource>?) throws -> [String] {

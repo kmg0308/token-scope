@@ -57,11 +57,10 @@ func drawIcon(size: CGFloat) -> NSImage {
     let canvas = CGRect(x: 0, y: 0, width: size, height: size)
     let backgroundTop = NSColor(calibratedRed: 0.035, green: 0.045, blue: 0.060, alpha: 1)
     let backgroundBottom = NSColor(calibratedRed: 0.000, green: 0.000, blue: 0.000, alpha: 1)
-    let barTop = NSColor(calibratedRed: 0.250, green: 0.700, blue: 1.000, alpha: 1)
-    let barBottom = NSColor(calibratedRed: 0.000, green: 0.340, blue: 0.880, alpha: 1)
-    let barShadow = NSColor(calibratedRed: 0.000, green: 0.180, blue: 0.520, alpha: 0.35)
-    let axisColor = NSColor(calibratedRed: 0.150, green: 0.510, blue: 1.000, alpha: 0.34)
-    let shineColor = NSColor.white.withAlphaComponent(0.16)
+    let barTop = NSColor(calibratedRed: 0.320, green: 0.730, blue: 1.000, alpha: 1)
+    let barBottom = NSColor(calibratedRed: 0.030, green: 0.360, blue: 0.920, alpha: 1)
+    let barShadow = NSColor(calibratedRed: 0.000, green: 0.110, blue: 0.360, alpha: 0.46)
+    let barHighlight = NSColor.white.withAlphaComponent(0.15)
     let tile = NSBezierPath(
         roundedRect: canvas.insetBy(dx: size * 0.01, dy: size * 0.01),
         xRadius: size * 0.22,
@@ -79,46 +78,38 @@ func drawIcon(size: CGFloat) -> NSImage {
     innerGlow.lineWidth = max(1, size * 0.018)
     innerGlow.stroke()
 
-    let axis = NSBezierPath(roundedRect: CGRect(
-        x: size * 0.19,
-        y: size * 0.22,
-        width: size * 0.62,
-        height: size * 0.045
-    ), xRadius: size * 0.022, yRadius: size * 0.022)
-    axisColor.setFill()
-    axis.fill()
-
-    let barWidth = size * 0.115
-    let barGap = size * 0.055
-    let startX = size * 0.245
-    let baseY = size * 0.245
-    let heights = [size * 0.225, size * 0.390, size * 0.545, size * 0.680]
+    let barWidth = size * 0.165
+    let barGap = size * 0.080
+    let groupWidth = barWidth * 2 + barGap
+    let startX = (size - groupWidth) / 2
+    let baseY = size * 0.235
+    let heights = [size * 0.430, size * 0.610]
 
     for (index, height) in heights.enumerated() {
         let x = startX + CGFloat(index) * (barWidth + barGap)
         let barRect = CGRect(x: x, y: baseY, width: barWidth, height: height)
 
-        let shadow = NSBezierPath(roundedRect: barRect.offsetBy(dx: size * 0.020, dy: -size * 0.018),
-                                  xRadius: size * 0.040,
-                                  yRadius: size * 0.040)
+        let shadow = NSBezierPath(roundedRect: barRect.offsetBy(dx: size * 0.024, dy: -size * 0.020),
+                                  xRadius: size * 0.052,
+                                  yRadius: size * 0.052)
         barShadow.setFill()
         shadow.fill()
 
         let bar = NSBezierPath(roundedRect: barRect,
-                               xRadius: size * 0.040,
-                               yRadius: size * 0.040)
+                               xRadius: size * 0.052,
+                               yRadius: size * 0.052)
         NSGradient(starting: barTop, ending: barBottom)?.draw(in: bar, angle: -90)
 
         let highlightRect = CGRect(
-            x: barRect.minX + barRect.width * 0.22,
-            y: barRect.minY + barRect.height * 0.10,
-            width: barRect.width * 0.26,
-            height: barRect.height * 0.82
+            x: barRect.minX + barRect.width * 0.28,
+            y: barRect.minY + barRect.height * 0.14,
+            width: barRect.width * 0.20,
+            height: barRect.height * 0.72
         )
         let highlight = NSBezierPath(roundedRect: highlightRect,
-                                     xRadius: size * 0.018,
-                                     yRadius: size * 0.018)
-        shineColor.setFill()
+                                     xRadius: size * 0.020,
+                                     yRadius: size * 0.020)
+        barHighlight.setFill()
         highlight.fill()
     }
 

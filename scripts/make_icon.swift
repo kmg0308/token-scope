@@ -55,43 +55,76 @@ func drawIcon(size: CGFloat) -> NSImage {
     context.setShouldAntialias(true)
 
     let canvas = CGRect(x: 0, y: 0, width: size, height: size)
-    let tileColor = NSColor.white
-    let markColor = NSColor.black
+    let backgroundTop = NSColor(calibratedRed: 0.035, green: 0.045, blue: 0.060, alpha: 1)
+    let backgroundBottom = NSColor(calibratedRed: 0.000, green: 0.000, blue: 0.000, alpha: 1)
+    let barTop = NSColor(calibratedRed: 0.250, green: 0.700, blue: 1.000, alpha: 1)
+    let barBottom = NSColor(calibratedRed: 0.000, green: 0.340, blue: 0.880, alpha: 1)
+    let barShadow = NSColor(calibratedRed: 0.000, green: 0.180, blue: 0.520, alpha: 0.35)
+    let axisColor = NSColor(calibratedRed: 0.150, green: 0.510, blue: 1.000, alpha: 0.34)
+    let shineColor = NSColor.white.withAlphaComponent(0.16)
     let tile = NSBezierPath(
         roundedRect: canvas.insetBy(dx: size * 0.01, dy: size * 0.01),
         xRadius: size * 0.22,
         yRadius: size * 0.22
     )
-    tileColor.setFill()
-    tile.fill()
+    let backgroundGradient = NSGradient(starting: backgroundTop, ending: backgroundBottom)
+    backgroundGradient?.draw(in: tile, angle: -90)
 
-    let markBounds = canvas.insetBy(dx: size * 0.14, dy: size * 0.14)
-    let outer = NSBezierPath(ovalIn: markBounds)
-    let inner = NSBezierPath(ovalIn: markBounds.insetBy(dx: size * 0.145, dy: size * 0.145))
-    outer.append(inner.reversed)
-    markColor.setFill()
-    outer.fill()
+    let innerGlow = NSBezierPath(
+        roundedRect: canvas.insetBy(dx: size * 0.045, dy: size * 0.045),
+        xRadius: size * 0.18,
+        yRadius: size * 0.18
+    )
+    NSColor(calibratedRed: 0.080, green: 0.240, blue: 0.470, alpha: 0.18).setStroke()
+    innerGlow.lineWidth = max(1, size * 0.018)
+    innerGlow.stroke()
 
-    let center = CGPoint(x: size * 0.5, y: size * 0.5)
-    let cutWidth = size * 0.14
-    let verticalCut = NSBezierPath(roundedRect: CGRect(
-        x: center.x - cutWidth / 2,
-        y: markBounds.minY - size * 0.02,
-        width: cutWidth,
-        height: markBounds.height + size * 0.04
-    ), xRadius: cutWidth / 2, yRadius: cutWidth / 2)
-    tileColor.setFill()
-    verticalCut.fill()
+    let axis = NSBezierPath(roundedRect: CGRect(
+        x: size * 0.19,
+        y: size * 0.22,
+        width: size * 0.62,
+        height: size * 0.045
+    ), xRadius: size * 0.022, yRadius: size * 0.022)
+    axisColor.setFill()
+    axis.fill()
 
-    let tokenSize = size * 0.12
-    let token = NSBezierPath(ovalIn: CGRect(
-        x: center.x - tokenSize / 2,
-        y: center.y - tokenSize / 2,
-        width: tokenSize,
-        height: tokenSize
-    ))
-    markColor.setFill()
-    token.fill()
+    let barWidth = size * 0.115
+    let barGap = size * 0.055
+    let startX = size * 0.245
+    let baseY = size * 0.245
+    let heights = [size * 0.225, size * 0.390, size * 0.545, size * 0.680]
+
+    for (index, height) in heights.enumerated() {
+        let x = startX + CGFloat(index) * (barWidth + barGap)
+        let barRect = CGRect(x: x, y: baseY, width: barWidth, height: height)
+
+        let shadow = NSBezierPath(roundedRect: barRect.offsetBy(dx: size * 0.020, dy: -size * 0.018),
+                                  xRadius: size * 0.040,
+                                  yRadius: size * 0.040)
+        barShadow.setFill()
+        shadow.fill()
+
+        let bar = NSBezierPath(roundedRect: barRect,
+                               xRadius: size * 0.040,
+                               yRadius: size * 0.040)
+        NSGradient(starting: barTop, ending: barBottom)?.draw(in: bar, angle: -90)
+
+        let highlightRect = CGRect(
+            x: barRect.minX + barRect.width * 0.22,
+            y: barRect.minY + barRect.height * 0.10,
+            width: barRect.width * 0.26,
+            height: barRect.height * 0.82
+        )
+        let highlight = NSBezierPath(roundedRect: highlightRect,
+                                     xRadius: size * 0.018,
+                                     yRadius: size * 0.018)
+        shineColor.setFill()
+        highlight.fill()
+    }
+
+    NSColor.black.withAlphaComponent(0.22).setStroke()
+    tile.lineWidth = max(1, size * 0.018)
+    tile.stroke()
 
     return image
 }

@@ -9,6 +9,8 @@ extension TokenMeterSelfTest {
         try scannerReusesCachedLocalFilesUntilTheyChange()
         try scannerReturnsCachedResultBeforeRefresh()
         try scannerCachedResultRestoresSyncStatus()
+        try scannerKeepsCodexCacheWhenLocalSessionFileIsRemoved()
+        try scannerPrunesClaudeCacheWhenLocalLogFileIsRemoved()
         try scannerAppendsGrowingLocalFileFromCache()
         try scannerIgnoresIncrementalClaudeDuplicateRequests()
         try scannerFallsBackToFullParseWhenGrowingFileModificationDateRegresses()
@@ -349,6 +351,66 @@ extension TokenMeterSelfTest {
         )
         try expect(windowed?.events.map(\.id) == ["recent-remote"], "windowed cached sync result filters old events")
         try expect(windowed?.syncStatus.importedEventCount == 1, "windowed cached sync status counts the same event window")
+    }
+
+    static func scannerKeepsCodexCacheWhenLocalSessionFileIsRemoved() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cache = try temporaryCache(in: directory)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+        let logURL = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "cached-codex.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10,
+            output: 5
+        )
+
+        let initial = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: initial.events).total == 15, "initial Codex cache total")
+
+        try FileManager.default.removeItem(at: logURL)
+        let refreshed = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: refreshed.events).total == 15, "removed Codex session remains available from cache")
+        try expect(refreshed.codexFileCount == 1, "removed Codex cache still contributes to source status")
+
+        let cached = scanner.cachedResult(eventAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: cached?.events ?? []).total == 15, "cached dashboard result keeps removed Codex usage")
+    }
+
+    static func scannerPrunesClaudeCacheWhenLocalLogFileIsRemoved() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cache = try temporaryCache(in: directory)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+        let logURL = try writeClaudeLog(
+            homeDirectory: home,
+            fileName: "removed-claude.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            sessionId: "session-a",
+            requestId: "request-a",
+            input: 10
+        )
+
+        let initial = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: initial.events).total == 10, "initial Claude cache total")
+
+        try FileManager.default.removeItem(at: logURL)
+        let refreshed = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(refreshed.events.isEmpty, "removed Claude log is pruned from cache")
+        try expect(refreshed.claudeFileCount == 0, "removed Claude cache does not contribute to source status")
     }
 
     static func scannerAppendsGrowingLocalFileFromCache() throws {

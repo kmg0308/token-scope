@@ -221,7 +221,11 @@ public final class TokenLogScanner: @unchecked Sendable {
     private func cleanupMissingLocalCacheEntries(roots: [RootScan]) {
         guard let cacheStore else { return }
         let paths = Set(roots.flatMap(\.allFilePaths))
-        try? cacheStore.removeMissingOrigins(originKind: .localLog, keeping: paths)
+        try? cacheStore.removeMissingOrigins(
+            originKind: .localLog,
+            keeping: paths,
+            pruningSources: [.claude]
+        )
     }
 
     private func cachedSyncStatus(

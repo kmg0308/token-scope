@@ -322,9 +322,13 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
-    func removeMissingOrigins(originKind: OriginKind, keeping existingPaths: Set<String>) throws {
+    func removeMissingOrigins(
+        originKind: OriginKind,
+        keeping existingPaths: Set<String>,
+        pruningSources: Set<TokenSource>? = nil
+    ) throws {
         try locked {
-            let paths = try originPaths(originKind: originKind)
+            let paths = try originPaths(originKind: originKind, pruningSources: pruningSources)
             let missingPaths = paths.filter { !existingPaths.contains($0) }
             guard !missingPaths.isEmpty else { return }
 
@@ -499,10 +503,10 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         return events
     }
 
-    private func originPaths(originKind: OriginKind) throws -> [String] {
+    private func originPaths(originKind: OriginKind, pruningSources: Set<TokenSource>?) throws -> [String] {
         var statement: OpaquePointer?
         try prepare(
-            "SELECT origin_path FROM origin_files WHERE origin_kind = ?",
+            "SELECT origin_path, source FROM origin_files WHERE origin_kind = ?",
             into: &statement
         )
         defer { sqlite3_finalize(statement) }
@@ -510,6 +514,12 @@ public final class TokenEventCacheStore: @unchecked Sendable {
 
         var paths: [String] = []
         while sqlite3_step(statement) == SQLITE_ROW {
+            if let pruningSources {
+                guard let source = nullableColumnString(statement, 1).flatMap(TokenSource.init(rawValue:)),
+                      pruningSources.contains(source) else {
+                    continue
+                }
+            }
             paths.append(columnString(statement, 0))
         }
         return paths

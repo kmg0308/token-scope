@@ -17,6 +17,9 @@ extension TokenMeterSelfTest {
         try syncFolderDeduplicatesAppendedDeviceLedgerRecords()
         try syncFolderCancellationSkipsPartialLocalLedgerWrite()
         try scannerMergesFreshWindowedSyncEventsWithCachedHistory()
+        try scannerKeepsSyncedCodexUsageAfterLocalSessionFilesAreRemoved()
+        try scannerKeepsMergedDeviceUsageAfterOneMacRemovesLocalSessionFiles()
+        try scannerRebuildsMissingLocalSyncLedgerAfterCodexSessionsAreRemoved()
         try scannerRestoresMissingLocalSyncLedgerFromCachedLocalHistory()
         try scannerExcludesCachedSyncEventsWhenSyncFolderIsDisabled()
         try scannerPrunesCachedSyncEventsWhenDeviceLedgerDisappears()
@@ -217,6 +220,110 @@ extension TokenMeterSelfTest {
         )
         try expect(windowed.events.map(\.id) == ["recent"], "sync import compares plain timestamps as dates")
         try expect(windowed.status.parseErrorCount == 0, "sync import accepts plain ISO timestamps")
+    }
+
+    static func scannerKeepsSyncedCodexUsageAfterLocalSessionFilesAreRemoved() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let scanner = TokenLogScanner(homeDirectory: home, localDevice: device)
+        let codexLog = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "session-a.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10,
+            output: 5
+        )
+
+        let initial = scanner.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(Aggregation.totalUsage(events: initial.events).total == 15, "initial Codex sync total")
+        try expect(initial.syncStatus.exportedEventCount == 1, "initial Codex sync exports one event")
+
+        try FileManager.default.removeItem(at: codexLog)
+        let removed = scanner.scan(syncFolder: syncFolder)
+        try expect(Aggregation.totalUsage(events: removed.events).total == 15, "synced Codex total survives removed local session file")
+        try expect(removed.events.first?.rawFilePath.hasPrefix("sync://") == true, "removed local session is restored from sync ledger")
+    }
+
+    static func scannerKeepsMergedDeviceUsageAfterOneMacRemovesLocalSessionFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeA = directory.appendingPathComponent("home-a", isDirectory: true)
+        let homeB = directory.appendingPathComponent("home-b", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let logA = try writeCodexLog(
+            homeDirectory: homeA,
+            fileName: "session-a.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10
+        )
+        try writeCodexLog(
+            homeDirectory: homeB,
+            fileName: "session-b.jsonl",
+            timestamp: "2026-01-01T00:01:00.000Z",
+            cwd: "/tmp/codex-project-b",
+            input: 20
+        )
+
+        let deviceA = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let deviceB = TokenDeviceMetadata(id: "mac-b", name: "Mac B")
+        let scannerA = TokenLogScanner(homeDirectory: homeA, localDevice: deviceA)
+        let scannerB = TokenLogScanner(homeDirectory: homeB, localDevice: deviceB)
+
+        let firstA = scannerA.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(Aggregation.totalUsage(events: firstA.events).total == 10, "first Mac exports local Codex total")
+        let firstB = scannerB.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(Aggregation.totalUsage(events: firstB.events).total == 30, "second Mac sees merged Codex total")
+
+        try FileManager.default.removeItem(at: logA)
+        let mergedA = scannerA.scan(syncFolder: syncFolder)
+        try expect(Aggregation.totalUsage(events: mergedA.events).total == 30, "merged Codex total survives one Mac pruning local sessions")
+        try expect(Set(mergedA.events.map(\.deviceId)) == ["mac-a", "mac-b"], "merged Codex events keep both device ids")
+    }
+
+    static func scannerRebuildsMissingLocalSyncLedgerAfterCodexSessionsAreRemoved() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let cache = try temporaryCache(in: directory)
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let scanner = TokenLogScanner(homeDirectory: home, localDevice: device, cacheStore: cache)
+        let codexLog = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "session-a.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10,
+            output: 5
+        )
+
+        let initial = scanner.scan(syncFolder: syncFolder, replaceSyncLedger: true)
+        try expect(Aggregation.totalUsage(events: initial.events).total == 15, "initial Codex cache warms local history")
+        try expect(try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 1, "initial Codex local ledger exists")
+
+        let ledgerURL = syncFolder
+            .appendingPathComponent("devices", isDirectory: true)
+            .appendingPathComponent("\(device.id).jsonl")
+        try FileManager.default.removeItem(at: codexLog)
+        try FileManager.default.removeItem(at: ledgerURL)
+
+        let restored = scanner.scan(syncFolder: syncFolder)
+        try expect(Aggregation.totalUsage(events: restored.events).total == 15, "Codex cache survives local session removal")
+        try expect(
+            try syncLedgerLineCount(syncFolder: syncFolder, deviceId: device.id) == 1,
+            "missing Codex local ledger is rebuilt from cached history"
+        )
     }
 
     static func syncFolderCountsMalformedCanonicalTimestampAsParseError() throws {

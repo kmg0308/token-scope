@@ -47,6 +47,34 @@ extension TokenMeterSelfTest {
         return url
     }
 
+    @discardableResult
+    static func writeCodexLog(
+        homeDirectory: URL,
+        fileName: String,
+        timestamp: String,
+        cwd: String,
+        model: String = "gpt-5.5",
+        input: Int,
+        output: Int = 0,
+        reasoning: Int = 0
+    ) throws -> URL {
+        let sessionDirectory = homeDirectory
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+            .appendingPathComponent("2026", isDirectory: true)
+            .appendingPathComponent("01", isDirectory: true)
+            .appendingPathComponent("01", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let total = input + output
+        let content = """
+        {"timestamp":"\(timestamp)","payload":{"type":"session_meta","cwd":"\(cwd)","model":"\(model)"}}
+        {"timestamp":"\(timestamp)","payload":{"info":{"last_token_usage":{"input_tokens":\(input),"cached_input_tokens":0,"output_tokens":\(output),"reasoning_output_tokens":\(reasoning),"total_tokens":\(total)}}}}
+        """
+        let url = sessionDirectory.appendingPathComponent(fileName)
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
     static func appendClaudeLogLine(
         to url: URL,
         timestamp: String,

@@ -39,17 +39,17 @@ struct DashboardView: View {
                 .padding(.bottom, 8)
             TokenSmoothScrollView(onScrollActivityChanged: model.scrollActivityChanged) {
                 VStack(alignment: .leading, spacing: 18) {
-                    if updates.updateLabel != nil {
-                        UpdateAvailableBanner()
-                    }
-
-                    mainSummary
-
                     CodexAccountUsagePanel(
                         usage: model.codexAccountUsage,
                         isLoading: model.isLoadingCodexAccountUsage,
                         errorMessage: model.codexAccountUsageError
                     )
+
+                    if updates.updateLabel != nil {
+                        UpdateAvailableBanner()
+                    }
+
+                    mainSummary
 
                     if let notice = dashboardNotice {
                         DashboardNoticeView(notice: notice)

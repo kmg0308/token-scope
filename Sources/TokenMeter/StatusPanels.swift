@@ -72,7 +72,7 @@ struct CodexAccountUsagePanel: View {
             }
             .font(.system(size: 11))
 
-            HStack(alignment: .center, spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 limitCell(title: "5 hour", window: usage?.fiveHourWindow)
 
                 panelDivider
@@ -137,19 +137,40 @@ struct CodexAccountUsagePanel: View {
                     .monospacedDigit()
                     .foregroundStyle(TokenMeterTheme.primaryText)
 
-                if let nextExpiration = credits.expirations.first {
-                    Text(expirationText(nextExpiration))
-                        .font(.system(size: 11))
-                        .foregroundStyle(TokenMeterTheme.secondaryText)
-                        .lineLimit(1)
-                } else if credits.availableCount == 0 {
+                if credits.availableCount == 0 {
                     Text("No reset credits available")
                         .font(.system(size: 11))
                         .foregroundStyle(TokenMeterTheme.secondaryText)
-                } else {
+                } else if credits.expirations.isEmpty {
                     Text("Expiration details unavailable")
                         .font(.system(size: 11))
                         .foregroundStyle(TokenMeterTheme.secondaryText)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(
+                            Array(credits.expirations.prefix(credits.availableCount).enumerated()),
+                            id: \.offset
+                        ) { index, expiration in
+                            Text("Credit \(index + 1) \(expirationText(expiration))")
+                                .lineLimit(1)
+                        }
+
+                        let missingExpirationCount = max(
+                            0,
+                            credits.availableCount - credits.expirations.count
+                        )
+                        if missingExpirationCount > 0 {
+                            Text(
+                                "\(missingExpirationCount) expiration "
+                                    + (missingExpirationCount == 1 ? "is" : "dates are")
+                                    + " unavailable"
+                            )
+                            .lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
                 }
             } else {
                 unavailableValue
@@ -171,7 +192,6 @@ struct CodexAccountUsagePanel: View {
 
     private var panelDivider: some View {
         Divider()
-            .frame(height: 72)
             .padding(.horizontal, 18)
     }
 
@@ -196,7 +216,7 @@ struct CodexAccountUsagePanel: View {
     }
 
     private func expirationText(_ date: Date) -> String {
-        "Next expires \(date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))"
+        "expires \(date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))"
     }
 }
 

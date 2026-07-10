@@ -119,6 +119,9 @@ final class DashboardModel: ObservableObject {
     @Published var syncFolderPath: String?
     @Published var isScanning = false
     @Published var isCleaningSessions = false
+    @Published private(set) var codexAccountUsage: CodexAccountUsage?
+    @Published private(set) var isLoadingCodexAccountUsage = false
+    @Published private(set) var codexAccountUsageError: String?
     @Published var sessionCleanupStatusText: String?
     @Published var errorMessage: String?
 
@@ -135,6 +138,7 @@ final class DashboardModel: ObservableObject {
     private let scanner: TokenLogScanner
     private var scanTask: Task<Void, Never>?
     private var cleanupTask: Task<Void, Never>?
+    private var codexAccountUsageTask: Task<Void, Never>?
     private var scanGeneration = 0
     private var scanCanDeferForScroll = false
     private var isScrollActive = false
@@ -166,12 +170,14 @@ final class DashboardModel: ObservableObject {
         if loadCachedDashboardResult() {
             refreshAfterScroll = true
             scheduleRefreshAfterScroll()
+            refreshCodexAccountUsage()
         } else {
             refresh()
         }
     }
 
     func refresh(restartInProgress: Bool = false, fullSync: Bool = false) {
+        refreshCodexAccountUsage()
         cancelDeferredRefresh()
         let windowStart = fullSync ? nil : scanWindowStart(for: range)
         startRefresh(
@@ -195,11 +201,41 @@ final class DashboardModel: ObservableObject {
     }
 
     func refreshRecentChangesWhenIdle() {
+        refreshCodexAccountUsage()
         guard !isScrollActive else {
             refreshAfterScroll = true
             return
         }
         refreshRecentChanges()
+    }
+
+    func refreshCodexAccountUsage() {
+        guard codexAccountUsageTask == nil else { return }
+
+        isLoadingCodexAccountUsage = true
+        let service = CodexAccountUsageService()
+        codexAccountUsageTask = Task { @MainActor [weak self] in
+            let result: Result<CodexAccountUsage, CodexAccountUsageError> = await Task.detached(priority: .utility) {
+                do {
+                    return .success(try service.fetch())
+                } catch let error as CodexAccountUsageError {
+                    return .failure(error)
+                } catch {
+                    return .failure(.invalidResponse)
+                }
+            }.value
+
+            guard let self, !Task.isCancelled else { return }
+            switch result {
+            case .success(let usage):
+                codexAccountUsage = usage
+                codexAccountUsageError = nil
+            case .failure(let error):
+                codexAccountUsageError = error.localizedDescription
+            }
+            isLoadingCodexAccountUsage = false
+            codexAccountUsageTask = nil
+        }
     }
 
     func scrollActivityChanged(_ isActive: Bool) {

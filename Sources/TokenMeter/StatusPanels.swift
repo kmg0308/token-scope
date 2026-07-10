@@ -36,6 +36,170 @@ struct DashboardNoticeView: View {
     }
 }
 
+struct CodexAccountUsagePanel: View {
+    let usage: CodexAccountUsage?
+    let isLoading: Bool
+    let errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "gauge.with.dots.needle.33percent")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TokenMeterTheme.accent)
+                Text("Codex limits")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TokenMeterTheme.primaryText)
+
+                Spacer()
+
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(usage == nil ? "Checking account" : "Refreshing")
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
+                } else if let errorMessage {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(TokenMeterTheme.warning)
+                    Text(usage == nil ? errorMessage : "Could not refresh")
+                        .foregroundStyle(TokenMeterTheme.warning)
+                        .lineLimit(1)
+                        .help(errorMessage)
+                } else if let fetchedAt = usage?.fetchedAt {
+                    Text("Updated \(fetchedAt.formatted(date: .omitted, time: .shortened))")
+                        .foregroundStyle(TokenMeterTheme.tertiaryText)
+                }
+            }
+            .font(.system(size: 11))
+
+            HStack(alignment: .center, spacing: 0) {
+                limitCell(title: "5 hour", window: usage?.fiveHourWindow)
+
+                panelDivider
+
+                limitCell(title: "7 day", window: usage?.sevenDayWindow)
+
+                panelDivider
+
+                resetCreditCell
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .tokenSurface()
+    }
+
+    private func limitCell(title: String, window: CodexRateLimitWindow?) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(TokenMeterTheme.tertiaryText)
+
+            if let window {
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    Text("\(window.remainingPercent)% left")
+                        .font(.system(size: 21, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(TokenMeterTheme.primaryText)
+                    Text("\(window.usedPercent)% used")
+                        .font(.system(size: 11, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
+                }
+
+                ProgressView(value: Double(window.remainingPercent), total: 100)
+                    .progressViewStyle(.linear)
+                    .tint(limitTint(for: window.remainingPercent))
+                    .frame(maxWidth: 240)
+
+                Text(resetText(window.resetsAt))
+                    .font(.system(size: 11))
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
+                    .lineLimit(1)
+            } else {
+                unavailableValue
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var resetCreditCell: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("RESET CREDITS")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(TokenMeterTheme.tertiaryText)
+
+            if let credits = usage?.resetCredits {
+                Text("\(credits.availableCount) available")
+                    .font(.system(size: 21, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(TokenMeterTheme.primaryText)
+
+                if let nextExpiration = credits.expirations.first {
+                    Text(expirationText(nextExpiration))
+                        .font(.system(size: 11))
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
+                        .lineLimit(1)
+                } else if credits.availableCount == 0 {
+                    Text("No reset credits available")
+                        .font(.system(size: 11))
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
+                } else {
+                    Text("Expiration details unavailable")
+                        .font(.system(size: 11))
+                        .foregroundStyle(TokenMeterTheme.secondaryText)
+                }
+            } else {
+                unavailableValue
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var unavailableValue: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("—")
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.tertiaryText)
+            Text(isLoading ? "Waiting for Codex" : "Not provided by Codex")
+                .font(.system(size: 11))
+                .foregroundStyle(TokenMeterTheme.secondaryText)
+        }
+    }
+
+    private var panelDivider: some View {
+        Divider()
+            .frame(height: 72)
+            .padding(.horizontal, 18)
+    }
+
+    private func limitTint(for remainingPercent: Int) -> Color {
+        if remainingPercent <= 10 {
+            return TokenMeterTheme.warning
+        }
+        if remainingPercent <= 30 {
+            return TokenMeterTheme.violet
+        }
+        return TokenMeterTheme.accent
+    }
+
+    private func resetText(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) {
+            return "Resets today at \(date.formatted(date: .omitted, time: .shortened))"
+        }
+        if Calendar.current.isDateInTomorrow(date) {
+            return "Resets tomorrow at \(date.formatted(date: .omitted, time: .shortened))"
+        }
+        return "Resets \(date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))"
+    }
+
+    private func expirationText(_ date: Date) -> String {
+        "Next expires \(date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))"
+    }
+}
+
 struct DataSourceStatusPanel: View {
     let statuses: [ScanSourceStatus]
     let hasEvents: Bool

@@ -6,12 +6,13 @@
 
 TokenMeter is a local-first macOS app for viewing Codex and Claude Code token usage from local log files.
 
-By default, it does not send prompts, code, messages, or token records to any server. GitHub network calls are used only for update checks and update downloads. If Sync Folder is enabled, TokenMeter writes sanitized usage records to the folder the user chooses.
+TokenMeter does not send prompts, code, messages, or token records to any server. It asks the locally installed Codex app server for account limit status, and Codex performs that authenticated OpenAI request without exposing credentials to TokenMeter. GitHub network calls are used only for update checks and update downloads. If Sync Folder is enabled, TokenMeter writes sanitized usage records to the folder the user chooses.
 
 ## Features
 
 - Main macOS dashboard app with Dock and Cmd+Tab support.
 - Dashboard sections: All, Codex, Claude Code.
+- Always-visible Codex account limits with 5-hour and 7-day used/remaining percentages, reset times, and available reset-credit count.
 - Time ranges: 30 minutes, 1/3/6/8/12/24 hours, today, yesterday, 7 days, 30 days, 3/6/12 months, and all history.
 - Token views: 1/5/10/20/30 minutes, hourly, daily, weekly, and monthly.
 - Breakdowns by app, token kind, model, project, and session.
@@ -115,6 +116,8 @@ For fully automatic app replacement, Sparkle is the standard macOS updater, but 
 ## Privacy
 
 TokenMeter reads token fields and metadata such as model, project path, session id, and timestamps. It does not store or display prompt or response text.
+
+Codex account limit status is fetched through the official local `codex app-server` protocol. TokenMeter never reads or stores the ChatGPT access token and never consumes a reset credit.
 
 When Sync Folder is enabled, TokenMeter writes only sanitized usage records to the chosen folder. Raw project paths and session ids are hashed before export. The original `~/.codex` and `~/.claude` JSONL files stay local.
 

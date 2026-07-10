@@ -45,6 +45,12 @@ struct DashboardView: View {
 
                     mainSummary
 
+                    CodexAccountUsagePanel(
+                        usage: model.codexAccountUsage,
+                        isLoading: model.isLoadingCodexAccountUsage,
+                        errorMessage: model.codexAccountUsageError
+                    )
+
                     if let notice = dashboardNotice {
                         DashboardNoticeView(notice: notice)
                     }

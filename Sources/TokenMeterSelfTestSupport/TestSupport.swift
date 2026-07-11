@@ -10,6 +10,7 @@ public enum TokenMeterSelfTest {
         try runSyncFolderTests()
         try runCodexSessionCleanupTests()
         try runCodexAccountUsageTests()
+        try runCountdownTextTests()
         if includeRealScan {
             runRealScanSmokeTest()
         }

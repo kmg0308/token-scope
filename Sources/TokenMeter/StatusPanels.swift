@@ -113,10 +113,17 @@ struct CodexAccountUsagePanel: View {
                     .tint(limitTint(for: window.remainingPercent))
                     .frame(maxWidth: 240)
 
-                Text(resetText(window.resetsAt))
-                    .font(.system(size: 11))
-                    .foregroundStyle(TokenMeterTheme.secondaryText)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(resetText(window.resetsAt))
+
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text("Resets in \(CountdownText.until(window.resetsAt, now: context.date))")
+                            .monospacedDigit()
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(TokenMeterTheme.secondaryText)
+                .lineLimit(1)
             } else {
                 unavailableValue
             }

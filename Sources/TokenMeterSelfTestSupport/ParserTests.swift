@@ -8,6 +8,7 @@ extension TokenMeterSelfTest {
         try codexParserSkipsUsageRecordsWithoutValidTimestamps()
         try codexParserUsesInvalidTimestampTotalsOnlyAsDeltaBaselines()
         try codexParserRejectsOutOfRangeCanonicalSeconds()
+        try codexParserSkipsInheritedUsageInForkedSessions()
         try claudeParserDeduplicatesRequestIDs()
         try claudeParserFallsBackFromEmptyRequestID()
         try claudeParserSkipsUsageRecordsWithoutValidTimestamps()
@@ -79,6 +80,23 @@ extension TokenMeterSelfTest {
         try expect(events.count == 1, "Codex parser rejects out-of-range canonical seconds")
         try expect(events.first?.usage.total == 4, "Codex parser keeps valid canonical seconds")
         try expect(events.first?.timestamp == isoDate("2026-01-01T00:00:59.000Z"), "Codex parser keeps valid second timestamp")
+    }
+
+    static func codexParserSkipsInheritedUsageInForkedSessions() throws {
+        let url = temporaryFile("""
+        {"timestamp":"2026-01-01T00:00:10.000Z","type":"session_meta","payload":{"id":"01900000-2000-7000-8000-000000000000","session_id":"01900000-1000-7000-8000-000000000000","forked_from_id":"01900000-1000-7000-8000-000000000000","cwd":"/tmp/project","model":"gpt-5.2-codex"}}
+        {"timestamp":"2026-01-01T00:00:10.000Z","type":"session_meta","payload":{"id":"01900000-1000-7000-8000-000000000000","session_id":"01900000-1000-7000-8000-000000000000"}}
+        {"timestamp":"2026-01-01T00:00:10.001Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01900000-1001-7000-8000-000000000000"}}
+        {"timestamp":"2026-01-01T00:00:10.001Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":5,"output_tokens":2,"reasoning_output_tokens":1,"total_tokens":12},"last_token_usage":{"input_tokens":10,"cached_input_tokens":5,"output_tokens":2,"reasoning_output_tokens":1,"total_tokens":12}}}}
+        {"timestamp":"2026-01-01T00:00:10.002Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":18,"cached_input_tokens":8,"output_tokens":4,"reasoning_output_tokens":1,"total_tokens":22},"last_token_usage":{"input_tokens":8,"cached_input_tokens":3,"output_tokens":2,"reasoning_output_tokens":0,"total_tokens":10}}}}
+        {"timestamp":"2026-01-01T00:00:10.100Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01900000-2001-7000-8000-000000000000"}}
+        {"timestamp":"2026-01-01T00:00:11.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":24,"cached_input_tokens":11,"output_tokens":5,"reasoning_output_tokens":1,"total_tokens":29},"last_token_usage":{"input_tokens":6,"cached_input_tokens":3,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":7}}}}
+        """)
+
+        let events = try TokenLogParser.parseCodexFile(at: url)
+        try expect(events.count == 1, "Codex fork parser excludes inherited token records")
+        try expect(events.first?.usage.total == 7, "Codex fork parser keeps only the child task usage")
+        try expect(events.first?.timestamp == isoDate("2026-01-01T00:00:11.000Z"), "Codex fork parser keeps the child task timestamp")
     }
 
     static func claudeParserDeduplicatesRequestIDs() throws {

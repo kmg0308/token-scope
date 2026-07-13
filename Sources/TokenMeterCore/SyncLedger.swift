@@ -61,6 +61,28 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         return (readResult.events, status)
     }
 
+    func requiresLocalLedgerRewrite() -> Bool {
+        let ledgerURL = localLedgerURL
+        guard fileManager.fileExists(atPath: ledgerURL.path),
+              let handle = try? FileHandle(forReadingFrom: ledgerURL) else {
+            return false
+        }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 256 * 1_024),
+              !data.isEmpty else {
+            return false
+        }
+
+        let decoder = Self.jsonDecoder
+        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true).prefix(16) {
+            guard let record = try? decoder.decode(SyncLedgerRecord.self, from: Data(line)) else {
+                continue
+            }
+            return record.schemaVersion != SyncLedgerRecord.currentSchemaVersion
+        }
+        return false
+    }
+
     private func writeLocalLedger(
         events: [TokenEvent],
         replaceExisting: Bool,
@@ -70,7 +92,7 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
 
         let devicesURL = folder.appendingPathComponent("devices", isDirectory: true)
         try fileManager.createDirectory(at: devicesURL, withIntermediateDirectories: true)
-        let localLedgerURL = devicesURL.appendingPathComponent("\(safeFileName(localDevice.id)).jsonl")
+        let localLedgerURL = self.localLedgerURL
 
         let records: [SyncLedgerRecord]
         if replaceExisting {
@@ -97,6 +119,12 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             appendLedgerCache(events: records.map(\.tokenEvent), at: localLedgerURL)
         }
         return records.count
+    }
+
+    private var localLedgerURL: URL {
+        folder
+            .appendingPathComponent("devices", isDirectory: true)
+            .appendingPathComponent("\(safeFileName(localDevice.id)).jsonl")
     }
 
     private func recordsByKey(
@@ -612,6 +640,8 @@ private enum SyncLedgerLineReadError: Error {
 }
 
 private struct SyncLedgerRecord: Codable, Hashable {
+    static let currentSchemaVersion = 2
+
     var schemaVersion: Int
     var deviceId: String
     var deviceName: String
@@ -624,7 +654,7 @@ private struct SyncLedgerRecord: Codable, Hashable {
     var usage: TokenUsage
 
     init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = currentSchemaVersion,
         deviceId: String,
         deviceName: String,
         eventId: String,

@@ -26,7 +26,23 @@ public final class TokenLogScanner: @unchecked Sendable {
         isCancelled: () -> Bool = { false }
     ) -> ScanResult {
         guard !isCancelled() else { return ScanResult() }
-        let rootScanResult = scanRoots(modifiedAfter: modifiedAfter, isCancelled: isCancelled)
+        let requiresLocalLogRebuild = (try? cacheStore?.requiresLocalLogRebuild()) ?? false
+        let requiresLocalLedgerRewrite: Bool
+        if let syncFolder {
+            requiresLocalLedgerRewrite = TokenSyncLedgerStore(
+                folder: syncFolder,
+                localDevice: localDevice,
+                fileManager: fileManager,
+                cacheStore: cacheStore
+            ).requiresLocalLedgerRewrite()
+        } else {
+            requiresLocalLedgerRewrite = false
+        }
+        let requiresFullRebuild = requiresLocalLogRebuild || requiresLocalLedgerRewrite
+        let effectiveModifiedAfter = requiresFullRebuild ? nil : modifiedAfter
+        let effectiveEventAfter = requiresFullRebuild ? nil : (eventAfter ?? modifiedAfter)
+
+        let rootScanResult = scanRoots(modifiedAfter: effectiveModifiedAfter, isCancelled: isCancelled)
         guard !isCancelled() else { return ScanResult() }
         var roots = rootScanResult.roots
         if rootScanResult.completed {
@@ -75,8 +91,8 @@ public final class TokenLogScanner: @unchecked Sendable {
         let syncOutcome = syncEvents(
             localEvents: localEventsForSync(freshEvents: localEvents, syncFolder: syncFolder),
             syncFolder: syncFolder,
-            replaceSyncLedger: replaceSyncLedger,
-            importedAfter: modifiedAfter,
+            replaceSyncLedger: replaceSyncLedger || requiresFullRebuild,
+            importedAfter: effectiveModifiedAfter,
             cacheStore: cacheStore,
             isCancelled: isCancelled
         )
@@ -84,7 +100,7 @@ public final class TokenLogScanner: @unchecked Sendable {
         let freshEvents = localEvents + syncOutcome.events
         let events: [TokenEvent]
         if let cachedEvents = cachedEvents(
-            modifiedAfter: eventAfter ?? modifiedAfter,
+            modifiedAfter: effectiveEventAfter,
             syncLedgerPaths: currentSyncLedgerPaths(in: syncFolder)
         ) {
             events = deduplicated(events: cachedEvents + freshEvents)

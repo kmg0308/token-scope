@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 public final class TokenEventCacheStore: @unchecked Sendable {
-    static let parserVersion = 3
+    static let parserVersion = 4
     private static let timestampTolerance: TimeInterval = 0.000_001
 
     struct FileSnapshot {
@@ -209,6 +209,25 @@ public final class TokenEventCacheStore: @unchecked Sendable {
                 size: metadata.size,
                 modifiedAt: Date(timeIntervalSince1970: metadata.modifiedAt)
             )
+        }
+    }
+
+    func requiresLocalLogRebuild() throws -> Bool {
+        try locked {
+            var statement: OpaquePointer?
+            try prepare(
+                """
+                SELECT 1
+                FROM origin_files
+                WHERE origin_kind = ? AND parser_version != ?
+                LIMIT 1
+                """,
+                into: &statement
+            )
+            defer { sqlite3_finalize(statement) }
+            bind(OriginKind.localLog.rawValue, to: statement, at: 1)
+            sqlite3_bind_int(statement, 2, Int32(Self.parserVersion))
+            return sqlite3_step(statement) == SQLITE_ROW
         }
     }
 

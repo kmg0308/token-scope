@@ -4,6 +4,7 @@ import TokenMeterCore
 extension TokenMeterSelfTest {
     static func runSyncFolderTests() throws {
         try syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents()
+        try scannerRebuildsLegacyLocalLedgerBeforeWindowedScan()
         try syncFolderAppendsOnlyNewLocalEvents()
         try syncFolderImportsOnlyRequestedWindow()
         try syncFolderImportsPlainTimestampWindowPrecisely()
@@ -129,6 +130,50 @@ extension TokenMeterSelfTest {
         try expect(!ledgerText.contains("session-b"), "sync ledger omits raw remote session ids")
         try expect(!ledgerText.contains("request-a"), "sync ledger omits raw local request ids")
         try expect(!ledgerText.contains("request-b"), "sync ledger omits raw remote request ids")
+    }
+
+    static func scannerRebuildsLegacyLocalLedgerBeforeWindowedScan() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        let devicesFolder = syncFolder.appendingPathComponent("devices", isDirectory: true)
+        try FileManager.default.createDirectory(at: devicesFolder, withIntermediateDirectories: true)
+
+        let device = TokenDeviceMetadata(id: "mac-a", name: "Mac A")
+        let localLog = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "old-local.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/project-a",
+            input: 10
+        )
+        try setModificationDate(isoDate("2026-01-01T00:05:00.000Z"), for: localLog)
+
+        let legacyLedger = """
+        {"device_id":"mac-a","device_name":"Mac A","event_id":"stale-inflated-event","model":"gpt-5.5","project_hash":"abcdef123456","schema_version":1,"session_hash":"123456abcdef","source":"codex","timestamp":"2026-01-01T00:00:00.000Z","usage":{"input":1000,"cachedInput":900,"cacheCreation":0,"cacheRead":0,"output":0,"reasoning":0,"total":1000}}
+        """ + "\n"
+        try legacyLedger.write(
+            to: devicesFolder.appendingPathComponent("mac-a.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: device,
+            cacheStore: try temporaryCache(in: directory.appendingPathComponent("cache"))
+        )
+        let result = scanner.scan(
+            modifiedAfter: isoDate("2026-01-02T00:00:00.000Z"),
+            eventAfter: isoDate("2026-01-02T00:00:00.000Z"),
+            syncFolder: syncFolder
+        )
+
+        try expect(Aggregation.totalUsage(events: result.events).total == 10, "legacy ledger rebuild scans complete local history")
+        let rebuiltLedger = try syncLedgerText(syncFolder: syncFolder)
+        try expect(rebuiltLedger.contains(#""schema_version":2"#), "legacy ledger rebuild writes current schema")
+        try expect(!rebuiltLedger.contains("stale-inflated-event"), "legacy ledger rebuild removes stale events")
     }
 
     static func syncFolderAppendsOnlyNewLocalEvents() throws {

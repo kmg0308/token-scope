@@ -15,10 +15,26 @@ public enum TokenLogParser {
         var projectPath = "Unknown"
         var model = "Unknown"
         var previousTotal: TokenUsage?
+        var forkedSessionId: String?
+        var isSkippingInheritedForkHistory = false
         let sessionId = sessionIdFromFileName(url.lastPathComponent)
 
         try forEachJSONLine(in: url, startOffset: startOffset, isCancelled: isCancelled) { index, object in
             guard let payload = object["payload"] as? [String: Any] else { return }
+
+            if startOffset == 0,
+               index == 0,
+               object["type"] as? String == "session_meta",
+               nonEmptyString(payload["forked_from_id"]) != nil,
+               let currentSessionId = nonEmptyString(payload["id"]) {
+                forkedSessionId = currentSessionId
+                isSkippingInheritedForkHistory = true
+            } else if isSkippingInheritedForkHistory,
+                      let forkedSessionId,
+                      startsTaskAtOrAfterSession(payload: payload, sessionId: forkedSessionId) {
+                isSkippingInheritedForkHistory = false
+                previousTotal = nil
+            }
 
             if let cwd = payload["cwd"] as? String, !cwd.isEmpty {
                 projectPath = cwd
@@ -30,6 +46,7 @@ public enum TokenLogParser {
             let totalDict = nestedDict(payload, ["info", "total_token_usage"])
             let lastDict = nestedDict(payload, ["info", "last_token_usage"])
             guard totalDict != nil || lastDict != nil else { return }
+            guard !isSkippingInheritedForkHistory else { return }
 
             guard let timestamp = dateParser.parse(object["timestamp"] as? String)
                 ?? dateParser.parse(payload["timestamp"] as? String) else {
@@ -265,6 +282,26 @@ public enum TokenLogParser {
     private static func nonEmptyString(_ value: Any?) -> String? {
         guard let string = value as? String, !string.isEmpty else { return nil }
         return string
+    }
+
+    private static func startsTaskAtOrAfterSession(payload: [String: Any], sessionId: String) -> Bool {
+        guard payload["type"] as? String == "task_started",
+              let taskId = nonEmptyString(payload["turn_id"]) ?? nonEmptyString(payload["id"]),
+              let taskTimestamp = uuidV7Timestamp(taskId),
+              let sessionTimestamp = uuidV7Timestamp(sessionId) else {
+            return false
+        }
+        return taskTimestamp >= sessionTimestamp
+    }
+
+    private static func uuidV7Timestamp(_ value: String) -> UInt64? {
+        guard let uuid = UUID(uuidString: value) else { return nil }
+        let compact = uuid.uuidString.replacingOccurrences(of: "-", with: "")
+        guard compact.count == 32,
+              compact[compact.index(compact.startIndex, offsetBy: 12)] == "7" else {
+            return nil
+        }
+        return UInt64(compact.prefix(12), radix: 16)
     }
 
     private static func sessionIdFromFileName(_ fileName: String) -> String {

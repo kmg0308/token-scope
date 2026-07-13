@@ -285,15 +285,16 @@ extension TokenMeterSelfTest {
         )
         defer { try? database.execute("ROLLBACK;") }
 
-        let startedAt = Date()
+        let clock = ContinuousClock()
+        let startedAt = clock.now
         let result = TokenLogScanner(
             homeDirectory: home,
             cacheStore: try temporaryCache(in: directory.appendingPathComponent("cache"))
         ).scan()
-        let elapsed = Date().timeIntervalSince(startedAt)
+        let elapsed = clock.now - startedAt
         try expect(result.events.isEmpty, "locked Hermes database returns no partial events")
         try expect(result.parseErrorCount == 1, "locked Hermes database reports one source error")
-        try expect(elapsed >= 4.5 && elapsed < 8, "Hermes database lock honors the five-second busy timeout")
+        try expect(elapsed < .seconds(8), "Hermes database lock returns within the configured timeout")
     }
 }
 

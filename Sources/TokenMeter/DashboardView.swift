@@ -587,7 +587,7 @@ struct DashboardView: View {
             return DashboardNotice(
                 icon: "arrow.triangle.2.circlepath",
                 title: "Scanning local logs",
-                message: "TokenMeter is reading Codex and Claude Code JSONL files.",
+                message: "TokenMeter is reading Codex, Hermes Agent, and Claude Code usage data.",
                 tint: TokenMeterTheme.accent
             )
         }

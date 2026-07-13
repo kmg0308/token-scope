@@ -4,7 +4,7 @@
 
 [Latest Release](https://github.com/kmg0308/token-scope/releases/latest) · [Download ZIP](https://github.com/kmg0308/token-scope/releases/latest/download/TokenMeter.zip)
 
-TokenMeter is a local-first macOS app for viewing Codex and Claude Code token usage from local log files.
+TokenMeter is a local-first macOS app for viewing Codex, Hermes Agent, and Claude Code token usage from local data stores.
 
 TokenMeter does not send prompts, code, messages, or token records to any server. It asks the locally installed Codex app server for account limit status, and Codex performs that authenticated OpenAI request without exposing credentials to TokenMeter. GitHub network calls are used only for update checks and update downloads. If Sync Folder is enabled, TokenMeter writes sanitized usage records to the folder the user chooses.
 
@@ -19,6 +19,7 @@ TokenMeter does not send prompts, code, messages, or token records to any server
 - Local parsing for:
   - `~/.codex/sessions/**/*.jsonl`
   - `~/.codex/archived_sessions/*.jsonl`
+  - `~/.hermes/state.db` for sessions billed through `openai-codex`
   - `~/.claude/projects/**/*.jsonl`
 - Optional Sync Folder support for combining multiple Macs through iCloud Drive, Dropbox, Syncthing, or any folder that syncs between devices.
 - GitHub Release update check, one-click update install, and relaunch.
@@ -117,9 +118,11 @@ For fully automatic app replacement, Sparkle is the standard macOS updater, but 
 
 TokenMeter reads token fields and metadata such as model, project path, session id, and timestamps. It does not store or display prompt or response text.
 
+Hermes stores cumulative session counters rather than a timestamped token record for every API call. TokenMeter opens `~/.hermes/state.db` read-only, imports only sessions billed by `openai-codex`, and follows [Hermes' canonical usage contract](https://github.com/NousResearch/hermes-agent/blob/main/agent/usage_pricing.py): uncached input, cache reads, cache writes, and output are separate buckets; reasoning is an output subset and is not added to the total again. The first observed total is placed at `ended_at` (then the latest message timestamp, then `started_at`), and only later counter deltas are recorded. A delta uses the latest persisted activity timestamp when available, or the time TokenMeter observed the change when Hermes stored no usable activity timestamp. This prevents refresh duplication but cannot reconstruct a more precise historical distribution that Hermes did not persist.
+
 Codex account limit status is fetched through the official local `codex app-server` protocol. TokenMeter never reads or stores the ChatGPT access token and never consumes a reset credit.
 
-When Sync Folder is enabled, TokenMeter writes only sanitized usage records to the chosen folder. Raw project paths and session ids are hashed before export. The original `~/.codex` and `~/.claude` JSONL files stay local.
+When Sync Folder is enabled, TokenMeter writes only sanitized usage records to the chosen folder. Raw project paths and session ids are hashed before export. The original `~/.codex` and `~/.claude` JSONL files and `~/.hermes/state.db` stay local.
 
 ## Requirements
 

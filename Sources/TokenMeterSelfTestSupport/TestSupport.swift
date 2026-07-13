@@ -7,6 +7,7 @@ public enum TokenMeterSelfTest {
         try runAggregationTests()
         try runUpdatePolicyTests()
         try runScannerCacheTests()
+        try runHermesScannerTests()
         try runSyncFolderTests()
         try runCodexSessionCleanupTests()
         try runCodexAccountUsageTests()
@@ -205,7 +206,20 @@ extension TokenMeterSelfTest {
         let modifiedAfter = Calendar.current.startOfDay(for: Date())
         let result = scanner.scan(modifiedAfter: modifiedAfter)
         let elapsed = Date().timeIntervalSince(start)
-        print("Real scan smoke: \(result.events.count) events, \(result.codexFileCount) Codex files, \(result.claudeFileCount) Claude files, \(String(format: "%.2f", elapsed))s")
+        let usage = Aggregation.totalUsage(events: result.events)
+        let codexEvents = result.events.filter { $0.source == .codex }
+        let hermesEvents = result.events.filter { $0.rawFilePath.hasPrefix("hermes://") }
+        let hermesUsage = Aggregation.totalUsage(events: hermesEvents)
+        let hermesStatus = result.sourceStatuses.first { $0.label == "Hermes Agent" }
+        print(
+            "Real scan smoke: \(result.events.count) events, \(usage.total) tokens, "
+                + "\(Set(result.events.map(\.sessionId)).count) sessions, "
+                + "\(Set(result.events.map(\.deviceId)).count) devices, "
+                + "\(codexEvents.count) Codex events, \(result.claudeFileCount) Claude files, "
+                + "Hermes DB \(hermesStatus?.exists == true ? "present" : "absent"), "
+                + "\(hermesEvents.count) Hermes events, \(hermesUsage.total) Hermes tokens, "
+                + "\(String(format: "%.2f", elapsed))s"
+        )
     }
 }
 

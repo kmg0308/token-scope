@@ -63,6 +63,15 @@ public final class TokenLogScanner: @unchecked Sendable {
         }
 
         guard !isCancelled() else { return ScanResult() }
+        let hermesOutcome = HermesTokenScanner(
+            homeDirectory: homeDirectory,
+            fileManager: fileManager,
+            localDevice: localDevice,
+            cacheStore: cacheStore
+        ).scan(isCancelled: isCancelled)
+        localEvents.append(contentsOf: hermesOutcome.events)
+
+        guard !isCancelled() else { return ScanResult() }
         let syncOutcome = syncEvents(
             localEvents: localEventsForSync(freshEvents: localEvents, syncFolder: syncFolder),
             syncFolder: syncFolder,
@@ -82,7 +91,9 @@ public final class TokenLogScanner: @unchecked Sendable {
         } else {
             events = deduplicated(events: freshEvents)
         }
-        let sourceStatuses = sourceStatuses(from: roots, events: events)
+        let sourceStatuses = sourceStatuses(from: roots, events: events) + [
+            hermesSourceStatus(outcome: hermesOutcome, events: events)
+        ]
         let codexFileCount = sourceStatuses
             .filter { $0.source == .codex }
             .map(\.scannedFileCount)
@@ -97,6 +108,7 @@ public final class TokenLogScanner: @unchecked Sendable {
 
         return ScanResult(
             events: events,
+            syncDevices: currentSyncDevices(in: syncFolder),
             codexFileCount: codexFileCount,
             claudeFileCount: claudeFileCount,
             parseErrorCount: parseErrors,
@@ -114,7 +126,7 @@ public final class TokenLogScanner: @unchecked Sendable {
         ), !events.isEmpty else {
             return nil
         }
-        let sourceStatuses = cachedSourceStatuses(from: events)
+        let sourceStatuses = cachedSourceStatuses(from: events) + [cachedHermesSourceStatus(from: events)]
         let codexFileCount = sourceStatuses
             .filter { $0.source == .codex }
             .map(\.scannedFileCount)
@@ -125,6 +137,7 @@ public final class TokenLogScanner: @unchecked Sendable {
             .reduce(0, +)
         return ScanResult(
             events: events,
+            syncDevices: currentSyncDevices(in: syncFolder),
             codexFileCount: codexFileCount,
             claudeFileCount: claudeFileCount,
             sourceStatuses: sourceStatuses,
@@ -171,6 +184,47 @@ public final class TokenLogScanner: @unchecked Sendable {
                 fileManager: fileManager
             )?.path
         })
+    }
+
+    private func currentSyncDevices(in syncFolder: URL?) -> [TokenDeviceMetadata] {
+        guard let syncFolder,
+              fileManager.fileExists(atPath: syncFolder.path) else {
+            return []
+        }
+
+        let devicesURL = syncFolder.appendingPathComponent("devices", isDirectory: true)
+        var devicesById: [String: TokenDeviceMetadata] = [:]
+        for url in syncLedgerFileURLs(in: devicesURL) {
+            let fallbackId = url.deletingPathExtension().lastPathComponent
+            let device = firstSyncDeviceRecord(in: url)
+                ?? TokenDeviceMetadata(id: fallbackId, name: fallbackId)
+            devicesById[device.id] = device
+        }
+        return devicesById.values.sorted {
+            if $0.name != $1.name {
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            return $0.id < $1.id
+        }
+    }
+
+    private func firstSyncDeviceRecord(in url: URL) -> TokenDeviceMetadata? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 256 * 1_024),
+              !data.isEmpty else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true).prefix(16) {
+            guard let record = try? decoder.decode(SyncDeviceRecord.self, from: Data(line)),
+                  !record.deviceId.isEmpty else {
+                continue
+            }
+            return TokenDeviceMetadata(id: record.deviceId, name: record.deviceName)
+        }
+        return nil
     }
 
     private func syncLedgerFileURLs(in devicesURL: URL) -> [URL] {
@@ -268,6 +322,39 @@ public final class TokenLogScanner: @unchecked Sendable {
         }
     }
 
+    private func hermesSourceStatus(outcome: HermesScanOutcome, events: [TokenEvent]) -> ScanSourceStatus {
+        return ScanSourceStatus(
+            source: .codex,
+            label: "Hermes Agent",
+            path: hermesDatabaseURL.path,
+            exists: outcome.databaseExists,
+            totalFileCount: outcome.databaseExists ? 1 : 0,
+            scannedFileCount: outcome.databaseExists && outcome.parseErrorCount == 0 ? 1 : 0,
+            parseErrorCount: outcome.parseErrorCount
+        )
+    }
+
+    private func cachedHermesSourceStatus(from events: [TokenEvent]) -> ScanSourceStatus {
+        let hasCachedEvents = events.contains(where: isHermesEvent)
+        let databaseExists = fileManager.fileExists(atPath: hermesDatabaseURL.path)
+        return ScanSourceStatus(
+            source: .codex,
+            label: "Hermes Agent",
+            path: hermesDatabaseURL.path,
+            exists: databaseExists,
+            totalFileCount: databaseExists ? 1 : 0,
+            scannedFileCount: hasCachedEvents ? 1 : 0
+        )
+    }
+
+    private var hermesDatabaseURL: URL {
+        homeDirectory.appendingPathComponent(".hermes/state.db")
+    }
+
+    private func isHermesEvent(_ event: TokenEvent) -> Bool {
+        event.rawFilePath.hasPrefix("hermes://")
+    }
+
     private func sourceStatuses(from roots: [RootScan], events: [TokenEvent]) -> [ScanSourceStatus] {
         roots.map { root in
             let contributingCachedFileCount = cachedLocalPaths(from: events, under: root.logRoot).count
@@ -345,6 +432,16 @@ public final class TokenLogScanner: @unchecked Sendable {
         var source: TokenSource
         var label: String
         var url: URL
+    }
+
+    private struct SyncDeviceRecord: Decodable {
+        var deviceId: String
+        var deviceName: String
+
+        enum CodingKeys: String, CodingKey {
+            case deviceId = "device_id"
+            case deviceName = "device_name"
+        }
     }
 
     private struct RootScan {

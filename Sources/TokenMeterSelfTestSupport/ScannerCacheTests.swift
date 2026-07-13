@@ -45,7 +45,7 @@ extension TokenMeterSelfTest {
         try expect(result.claudeFileCount == 45, "scanner includes every recent Claude file")
         try expect(result.events.count == 45, "scanner parses every recent Claude event")
         try expect(Aggregation.totalUsage(events: result.events).total == 45, "scanner totals every recent Claude event")
-        try expect(result.sourceStatuses.count == 3, "scanner reports every source root")
+        try expect(result.sourceStatuses.count == 4, "scanner reports every source root")
         let claudeStatus = result.sourceStatuses.first { $0.label == "Claude projects" }
         try expect(claudeStatus?.exists == true, "scanner reports Claude root exists")
         try expect(claudeStatus?.totalFileCount == 45, "scanner reports Claude total files")

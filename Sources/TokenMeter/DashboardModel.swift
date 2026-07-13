@@ -439,12 +439,18 @@ final class DashboardModel: ObservableObject {
             DashboardDeviceOption(id: Self.allDevicesFilterId, title: "All Devices", deviceId: nil),
             DashboardDeviceOption(id: localDevice.id, title: "This Mac", deviceId: localDevice.id)
         ]
-        let remoteDevices = Dictionary(grouping: scanResult.events, by: \.deviceId)
-            .compactMap { deviceId, events -> DashboardDeviceOption? in
-                guard deviceId != localDevice.id else { return nil }
-                let name = events.last?.deviceName ?? deviceId
-                return DashboardDeviceOption(id: deviceId, title: name, deviceId: deviceId)
-            }
+        var remoteDevicesById = Dictionary(
+            uniqueKeysWithValues: scanResult.syncDevices
+                .filter { $0.id != localDevice.id }
+                .map { ($0.id, $0.name) }
+        )
+        for (deviceId, events) in Dictionary(grouping: scanResult.events, by: \.deviceId) {
+            guard deviceId != localDevice.id else { continue }
+            remoteDevicesById[deviceId] = events.last?.deviceName ?? remoteDevicesById[deviceId] ?? deviceId
+        }
+        let remoteDevices = remoteDevicesById.map { deviceId, name in
+            DashboardDeviceOption(id: deviceId, title: name, deviceId: deviceId)
+        }
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         configuredOptions.append(contentsOf: remoteDevices)
         options = configuredOptions

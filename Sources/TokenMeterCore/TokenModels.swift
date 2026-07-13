@@ -130,7 +130,7 @@ public struct TokenUsage: Codable, Hashable, Sendable {
         switch source {
         case .codex:
             plainInput = max(0, input - cachedInput)
-            cache = cachedInput
+            cache = Self.saturatingSum(cachedInput, cacheCreation, cacheRead)
         case .claude:
             plainInput = input
             cache = Self.saturatingAdd(cacheCreation, cacheRead)
@@ -244,6 +244,7 @@ public struct TokenEvent: Identifiable, Codable, Hashable, Sendable {
 
 public struct ScanResult: Sendable {
     public var events: [TokenEvent]
+    public var syncDevices: [TokenDeviceMetadata]
     public var codexFileCount: Int
     public var claudeFileCount: Int
     public var parseErrorCount: Int
@@ -253,6 +254,7 @@ public struct ScanResult: Sendable {
 
     public init(
         events: [TokenEvent] = [],
+        syncDevices: [TokenDeviceMetadata] = [],
         codexFileCount: Int = 0,
         claudeFileCount: Int = 0,
         parseErrorCount: Int = 0,
@@ -261,6 +263,7 @@ public struct ScanResult: Sendable {
         scannedAt: Date = Date()
     ) {
         self.events = events
+        self.syncDevices = syncDevices
         self.codexFileCount = codexFileCount
         self.claudeFileCount = claudeFileCount
         self.parseErrorCount = parseErrorCount

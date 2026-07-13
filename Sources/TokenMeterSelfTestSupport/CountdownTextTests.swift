@@ -10,8 +10,12 @@ extension TokenMeterSelfTest {
             "countdown formats hours, minutes, and seconds"
         )
         try expect(
-            CountdownText.until(now.addingTimeInterval(7 * 86_400 + 61), now: now) == "168h 01m 01s",
-            "countdown keeps weekly durations in hours"
+            CountdownText.until(now.addingTimeInterval(86_400), now: now) == "1d 00h 00m 00s",
+            "countdown starts showing days at 24 hours"
+        )
+        try expect(
+            CountdownText.until(now.addingTimeInterval(3 * 86_400 + 22 * 3_600 + 38 * 60 + 29), now: now) == "3d 22h 38m 29s",
+            "countdown formats multi-day durations with days"
         )
         try expect(
             CountdownText.until(now.addingTimeInterval(-1), now: now) == "00h 00m 00s",

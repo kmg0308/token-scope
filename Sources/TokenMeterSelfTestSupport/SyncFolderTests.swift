@@ -27,6 +27,46 @@ extension TokenMeterSelfTest {
         try scannerPrunesCachedSyncEventsWhenDevicesDirectoryDisappears()
         try syncFolderIgnoresJSONLDirectories()
         try syncFolderIgnoresNestedJSONLFiles()
+        try scannerListsSyncedDeviceOutsideRequestedEventWindow()
+    }
+
+    static func scannerListsSyncedDeviceOutsideRequestedEventWindow() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let remoteDevice = TokenDeviceMetadata(id: "remote-mac", name: "Hermes Mac")
+        let remoteStore = TokenSyncLedgerStore(folder: syncFolder, localDevice: remoteDevice)
+        let oldEvent = TokenEvent(
+            id: "old-remote-event",
+            source: .codex,
+            timestamp: isoDate("2026-07-01T00:00:00.000Z"),
+            deviceId: remoteDevice.id,
+            deviceName: remoteDevice.name,
+            projectPath: "/tmp/remote",
+            sessionId: "remote-session",
+            model: "gpt-5.5",
+            usage: TokenUsage(input: 10),
+            rawFilePath: "/tmp/remote.jsonl"
+        )
+        _ = remoteStore.synchronize(localEvents: [oldEvent], replaceLocalLedger: true)
+
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "local-mac", name: "This Mac"),
+            cacheStore: try temporaryCache(in: directory.appendingPathComponent("cache"))
+        )
+        let recentStart = isoDate("2026-07-13T00:00:00.000Z")
+        let result = scanner.scan(
+            modifiedAfter: recentStart,
+            eventAfter: recentStart,
+            syncFolder: syncFolder
+        )
+
+        try expect(result.events.allSatisfy { $0.deviceId != remoteDevice.id }, "old remote events stay outside requested window")
+        try expect(result.syncDevices.contains(remoteDevice), "synced device remains available outside requested event window")
     }
 
     static func syncFolderMergesDeviceLedgersAndDeduplicatesLocalEvents() throws {

@@ -52,7 +52,20 @@ public final class TokenEventCacheStore: @unchecked Sendable {
 
     enum OriginKind: String {
         case localLog = "local_log"
+        case hermesDatabase = "hermes_database"
         case syncLedger = "sync_ledger"
+    }
+
+    struct HermesCheckpoint {
+        var usage: TokenUsage
+        var sequence: Int
+    }
+
+    struct HermesCheckpointUpdate {
+        var sessionId: String
+        var usage: TokenUsage
+        var sequence: Int
+        var event: TokenEvent?
     }
 
     enum CachedFile {
@@ -282,8 +295,11 @@ public final class TokenEventCacheStore: @unchecked Sendable {
     }
 
     private func eventsQuery(modifiedAfter: Date?, syncLedgerPaths: Set<String>?) -> SQLQuery {
-        var clauses: [String] = ["origin_kind = ?"]
-        var bindings: [SQLBinding] = [.string(OriginKind.localLog.rawValue)]
+        var clauses: [String] = ["origin_kind = ?", "origin_kind = ?"]
+        var bindings: [SQLBinding] = [
+            .string(OriginKind.localLog.rawValue),
+            .string(OriginKind.hermesDatabase.rawValue)
+        ]
 
         if let syncLedgerPaths, !syncLedgerPaths.isEmpty {
             let paths = syncLedgerPaths.sorted()
@@ -378,6 +394,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             try transaction {
                 try execute("DELETE FROM event_records")
                 try execute("DELETE FROM origin_files")
+                try execute("DELETE FROM hermes_checkpoints")
             }
         }
     }
@@ -444,6 +461,111 @@ public final class TokenEventCacheStore: @unchecked Sendable {
                 ON event_records(device_id, event_id, priority)
                 """
             )
+            try execute(
+                """
+                CREATE TABLE IF NOT EXISTS hermes_checkpoints (
+                    origin_path TEXT NOT NULL,
+                    device_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    cache_write_tokens INTEGER NOT NULL,
+                    cache_read_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    reasoning_tokens INTEGER NOT NULL,
+                    event_sequence INTEGER NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (origin_path, device_id, session_id)
+                )
+                """
+            )
+        }
+    }
+
+    func hermesCheckpoints(originPath: String, deviceId: String) throws -> [String: HermesCheckpoint] {
+        try locked {
+            var statement: OpaquePointer?
+            try prepare(
+                """
+                SELECT session_id, input_tokens, cache_write_tokens, cache_read_tokens,
+                       output_tokens, reasoning_tokens, event_sequence
+                FROM hermes_checkpoints
+                WHERE origin_path = ? AND device_id = ?
+                """,
+                into: &statement
+            )
+            defer { sqlite3_finalize(statement) }
+            bind(originPath, to: statement, at: 1)
+            bind(deviceId, to: statement, at: 2)
+
+            var result: [String: HermesCheckpoint] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let sessionId = columnString(statement, 0)
+                result[sessionId] = HermesCheckpoint(
+                    usage: TokenUsage(
+                        input: Int(clamping: sqlite3_column_int64(statement, 1)),
+                        cacheCreation: Int(clamping: sqlite3_column_int64(statement, 2)),
+                        cacheRead: Int(clamping: sqlite3_column_int64(statement, 3)),
+                        output: Int(clamping: sqlite3_column_int64(statement, 4)),
+                        reasoning: Int(clamping: sqlite3_column_int64(statement, 5))
+                    ),
+                    sequence: Int(clamping: sqlite3_column_int64(statement, 6))
+                )
+            }
+            guard sqlite3_errcode(database) == SQLITE_OK || sqlite3_errcode(database) == SQLITE_DONE else {
+                throw CacheError(message: lastErrorMessage)
+            }
+            return result
+        }
+    }
+
+    func applyHermesUpdates(
+        _ updates: [HermesCheckpointUpdate],
+        originPath: String,
+        deviceId: String
+    ) throws {
+        guard !updates.isEmpty else { return }
+        try locked {
+            try transaction {
+                var statement: OpaquePointer?
+                try prepare(
+                    """
+                    INSERT INTO hermes_checkpoints (
+                        origin_path, device_id, session_id, input_tokens,
+                        cache_write_tokens, cache_read_tokens, output_tokens,
+                        reasoning_tokens, event_sequence, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(origin_path, device_id, session_id) DO UPDATE SET
+                        input_tokens = excluded.input_tokens,
+                        cache_write_tokens = excluded.cache_write_tokens,
+                        cache_read_tokens = excluded.cache_read_tokens,
+                        output_tokens = excluded.output_tokens,
+                        reasoning_tokens = excluded.reasoning_tokens,
+                        event_sequence = excluded.event_sequence,
+                        updated_at = excluded.updated_at
+                    """,
+                    into: &statement
+                )
+                defer { sqlite3_finalize(statement) }
+
+                for update in updates {
+                    if let event = update.event {
+                        try insertEvents([event], originKind: .hermesDatabase, originPath: originPath)
+                    }
+                    bind(originPath, to: statement, at: 1)
+                    bind(deviceId, to: statement, at: 2)
+                    bind(update.sessionId, to: statement, at: 3)
+                    sqlite3_bind_int64(statement, 4, Int64(clamping: update.usage.input))
+                    sqlite3_bind_int64(statement, 5, Int64(clamping: update.usage.cacheCreation))
+                    sqlite3_bind_int64(statement, 6, Int64(clamping: update.usage.cacheRead))
+                    sqlite3_bind_int64(statement, 7, Int64(clamping: update.usage.output))
+                    sqlite3_bind_int64(statement, 8, Int64(clamping: update.usage.reasoning))
+                    sqlite3_bind_int64(statement, 9, Int64(clamping: update.sequence))
+                    sqlite3_bind_double(statement, 10, Date().timeIntervalSince1970)
+                    try stepDone(statement)
+                    sqlite3_reset(statement)
+                    sqlite3_clear_bindings(statement)
+                }
+            }
         }
     }
 
@@ -651,7 +773,7 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             bind(event.id, to: statement, at: 4)
             sqlite3_bind_double(statement, 5, event.timestamp.timeIntervalSince1970)
             bind(event.source.rawValue, to: statement, at: 6)
-            sqlite3_bind_int(statement, 7, Int32(originKind == .localLog ? 2 : 1))
+            sqlite3_bind_int(statement, 7, Int32(originKind == .syncLedger ? 1 : 2))
             _ = data.withUnsafeBytes { buffer in
                 sqlite3_bind_blob(statement, 8, buffer.baseAddress, Int32(data.count), transient)
             }

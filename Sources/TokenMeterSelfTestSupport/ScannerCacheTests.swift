@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import TokenMeterCore
 
 extension TokenMeterSelfTest {
@@ -17,6 +18,120 @@ extension TokenMeterSelfTest {
         try scannerKeepsCachedHistoryDuringRecentRefresh()
         try scannerCancelledEnumerationKeepsExistingCache()
         try scannerCancellationDuringFileParseReturnsNoPartialEvents()
+        try scannerIgnoresOutdatedCacheForRemovedCodexFiles()
+        try scannerRebuildsExistingOutdatedFileOnlyOnce()
+    }
+
+    static func scannerRebuildsExistingOutdatedFileOnlyOnce() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cacheURL = directory.appendingPathComponent("cache.sqlite")
+        let cache = try TokenEventCacheStore(databaseURL: cacheURL)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+        let logURL = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "existing-outdated.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10
+        )
+        try setModificationDate(isoDate("2026-01-01T00:05:00.000Z"), for: logURL)
+        _ = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try setCachedParserVersion(3, databaseURL: cacheURL, originPath: logURL.resolvingSymlinksInPath().path)
+
+        try writeCodexLog(
+            homeDirectory: home,
+            fileName: "existing-outdated.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 20
+        )
+        try setModificationDate(isoDate("2026-01-01T00:05:00.000Z"), for: logURL)
+        let rebuilt = scanner.scan(
+            modifiedAfter: isoDate("2026-02-01T00:00:00.000Z"),
+            eventAfter: isoDate("2026-02-01T00:00:00.000Z")
+        )
+        try expect(Aggregation.totalUsage(events: rebuilt.events).total == 20, "existing outdated file is reparsed outside the recent window")
+
+        try FileManager.default.removeItem(at: logURL)
+        let recent = scanner.scan(
+            modifiedAfter: isoDate("2026-02-01T00:00:00.000Z"),
+            eventAfter: isoDate("2026-02-01T00:00:00.000Z")
+        )
+        try expect(recent.events.isEmpty, "rebuilt file does not trigger another all-history refresh")
+    }
+
+    static func scannerIgnoresOutdatedCacheForRemovedCodexFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let home = directory.appendingPathComponent("home", isDirectory: true)
+        let cacheURL = directory.appendingPathComponent("cache.sqlite")
+        let cache = try TokenEventCacheStore(databaseURL: cacheURL)
+        let scanner = TokenLogScanner(
+            homeDirectory: home,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+        let logURL = try writeCodexLog(
+            homeDirectory: home,
+            fileName: "removed-outdated.jsonl",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            cwd: "/tmp/codex-project-a",
+            input: 10
+        )
+
+        let initial = scanner.scan(modifiedAfter: isoDate("2025-12-31T00:00:00.000Z"))
+        try expect(Aggregation.totalUsage(events: initial.events).total == 10, "initial outdated-cache fixture total")
+        try FileManager.default.removeItem(at: logURL)
+        try setCachedParserVersion(3, databaseURL: cacheURL, originPath: logURL.resolvingSymlinksInPath().path)
+
+        let recent = scanner.scan(
+            modifiedAfter: isoDate("2026-02-01T00:00:00.000Z"),
+            eventAfter: isoDate("2026-02-01T00:00:00.000Z")
+        )
+        try expect(recent.events.isEmpty, "removed outdated Codex cache does not force an all-history refresh")
+    }
+
+    private static func setCachedParserVersion(
+        _ version: Int32,
+        databaseURL: URL,
+        originPath: String
+    ) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              let database else {
+            throw TestFailure(message: "open cache database for parser-version fixture")
+        }
+        defer { sqlite3_close(database) }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "UPDATE origin_files SET parser_version = ? WHERE origin_kind = 'local_log' AND origin_path = ?",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK,
+            let statement else {
+            throw TestFailure(message: "prepare parser-version fixture")
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int(statement, 1, version)
+        sqlite3_bind_text(
+            statement,
+            2,
+            originPath,
+            -1,
+            unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        )
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw TestFailure(message: "write parser-version fixture")
+        }
     }
 
     static func scannerIncludesAllRecentClaudeFiles() throws {

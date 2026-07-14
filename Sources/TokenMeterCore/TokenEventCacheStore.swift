@@ -130,7 +130,11 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
-    func cachedEventKeys(for snapshot: FileSnapshot, originKind: OriginKind) throws -> Set<String>? {
+    func cachedExistingEventKeys(
+        for snapshot: FileSnapshot,
+        originKind: OriginKind,
+        candidates: [TokenEvent]
+    ) throws -> Set<String>? {
         try locked {
             guard let metadata = try metadata(for: snapshot, originKind: originKind),
                   metadataMatches(metadata, snapshot: snapshot),
@@ -138,26 +142,41 @@ public final class TokenEventCacheStore: @unchecked Sendable {
                 return nil
             }
 
+            var candidatesByKey: [String: TokenEvent] = [:]
+            for event in candidates {
+                candidatesByKey["\(event.deviceId)|\(event.id)"] = event
+            }
+            guard !candidatesByKey.isEmpty else { return [] }
+
             var statement: OpaquePointer?
             try prepare(
                 """
-                SELECT device_id, event_id
+                SELECT 1
                 FROM event_records
                 WHERE origin_kind = ? AND origin_path = ?
+                  AND device_id = ? AND event_id = ?
+                LIMIT 1
                 """,
                 into: &statement
             )
             defer { sqlite3_finalize(statement) }
-            bind(originKind.rawValue, to: statement, at: 1)
-            bind(snapshot.path, to: statement, at: 2)
 
-            var keys = Set<String>()
-            while sqlite3_step(statement) == SQLITE_ROW {
-                let deviceId = columnString(statement, 0)
-                let eventId = columnString(statement, 1)
-                keys.insert("\(deviceId)|\(eventId)")
+            var existingKeys = Set<String>()
+            for (key, event) in candidatesByKey {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                bind(originKind.rawValue, to: statement, at: 1)
+                bind(snapshot.path, to: statement, at: 2)
+                bind(event.deviceId, to: statement, at: 3)
+                bind(event.id, to: statement, at: 4)
+                let result = sqlite3_step(statement)
+                if result == SQLITE_ROW {
+                    existingKeys.insert(key)
+                } else if result != SQLITE_DONE {
+                    throw CacheError(message: lastErrorMessage)
+                }
             }
-            return keys
+            return existingKeys
         }
     }
 
@@ -212,22 +231,55 @@ public final class TokenEventCacheStore: @unchecked Sendable {
         }
     }
 
-    func requiresLocalLogRebuild() throws -> Bool {
+    func localLogPathsRequiringRebuild() throws -> Set<String> {
         try locked {
             var statement: OpaquePointer?
             try prepare(
                 """
-                SELECT 1
+                SELECT origin_path
                 FROM origin_files
                 WHERE origin_kind = ? AND parser_version != ?
-                LIMIT 1
                 """,
                 into: &statement
             )
             defer { sqlite3_finalize(statement) }
             bind(OriginKind.localLog.rawValue, to: statement, at: 1)
             sqlite3_bind_int(statement, 2, Int32(Self.parserVersion))
-            return sqlite3_step(statement) == SQLITE_ROW
+
+            var paths = Set<String>()
+            while sqlite3_step(statement) == SQLITE_ROW {
+                paths.insert(columnString(statement, 0))
+            }
+            return paths
+        }
+    }
+
+    func localLogOriginPaths(modifiedAfter: Date? = nil) throws -> [(path: String, source: TokenSource)] {
+        try locked {
+            let timestampClause = modifiedAfter == nil ? "" : " AND timestamp >= ?"
+            var statement: OpaquePointer?
+            try prepare(
+                """
+                SELECT DISTINCT origin_path, source
+                FROM event_records
+                WHERE origin_kind = ?\(timestampClause)
+                """,
+                into: &statement
+            )
+            defer { sqlite3_finalize(statement) }
+            bind(OriginKind.localLog.rawValue, to: statement, at: 1)
+            if let modifiedAfter {
+                sqlite3_bind_double(statement, 2, modifiedAfter.timeIntervalSince1970)
+            }
+
+            var origins: [(path: String, source: TokenSource)] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let source = TokenSource(rawValue: columnString(statement, 1)) else {
+                    continue
+                }
+                origins.append((columnString(statement, 0), source))
+            }
+            return origins
         }
     }
 
@@ -458,6 +510,12 @@ public final class TokenEventCacheStore: @unchecked Sendable {
             )
             try execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_origin_files_rebuild
+                ON origin_files(origin_kind, parser_version, origin_path)
+                """
+            )
+            try execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_event_records_origin
                 ON event_records(origin_kind, origin_path)
                 """
@@ -472,6 +530,12 @@ public final class TokenEventCacheStore: @unchecked Sendable {
                 """
                 CREATE INDEX IF NOT EXISTS idx_event_records_timestamp
                 ON event_records(timestamp)
+                """
+            )
+            try execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_event_records_source_status
+                ON event_records(origin_kind, timestamp, source, origin_path)
                 """
             )
             try execute(

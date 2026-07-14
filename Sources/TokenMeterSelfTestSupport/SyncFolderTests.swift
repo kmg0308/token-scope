@@ -13,6 +13,7 @@ extension TokenMeterSelfTest {
         try syncFolderNormalizesDecodedUsageValues()
         try syncFolderReusesCachedDeviceLedgers()
         try syncFolderFiltersCachedDeviceLedgersByRequestedWindow()
+        try syncFolderWarmsFullCacheDuringWindowedImport()
         try syncFolderAppendsCachedDeviceLedgerIncrementally()
         try syncFolderReadsOnlyAppendedDeviceLedgerLines()
         try syncFolderDeduplicatesAppendedDeviceLedgerRecords()
@@ -29,6 +30,54 @@ extension TokenMeterSelfTest {
         try syncFolderIgnoresJSONLDirectories()
         try syncFolderIgnoresNestedJSONLFiles()
         try scannerListsSyncedDeviceOutsideRequestedEventWindow()
+    }
+
+    static func syncFolderWarmsFullCacheDuringWindowedImport() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let syncFolder = directory.appendingPathComponent("sync", isDirectory: true)
+        try FileManager.default.createDirectory(at: syncFolder, withIntermediateDirectories: true)
+
+        let writerDevice = TokenDeviceMetadata(id: "mac-b", name: "Mac B")
+        let writer = TokenSyncLedgerStore(folder: syncFolder, localDevice: writerDevice)
+        let oldEvent = TokenEvent(
+            id: "old",
+            source: .codex,
+            timestamp: isoDate("2026-01-01T00:00:00.000Z"),
+            deviceId: writerDevice.id,
+            deviceName: writerDevice.name,
+            usage: TokenUsage(total: 10),
+            rawFilePath: "/tmp/old.jsonl"
+        )
+        let recentEvent = TokenEvent(
+            id: "recent",
+            source: .codex,
+            timestamp: isoDate("2026-01-02T00:00:00.000Z"),
+            deviceId: writerDevice.id,
+            deviceName: writerDevice.name,
+            usage: TokenUsage(total: 20),
+            rawFilePath: "/tmp/recent.jsonl"
+        )
+        _ = writer.synchronize(localEvents: [oldEvent, recentEvent], replaceLocalLedger: true)
+
+        let cache = try temporaryCache(in: directory.appendingPathComponent("cache"))
+        let reader = TokenSyncLedgerStore(
+            folder: syncFolder,
+            localDevice: TokenDeviceMetadata(id: "mac-a", name: "Mac A"),
+            cacheStore: cache
+        )
+        let cutoff = isoDate("2026-01-01T12:00:00.000Z")
+        let first = reader.synchronize(localEvents: [], importedAfter: cutoff)
+        try expect(first.events.map(\.id) == ["recent"], "cold windowed sync returns only requested events")
+
+        let ledgerURL = syncFolder
+            .appendingPathComponent("devices", isDirectory: true)
+            .appendingPathComponent("\(writerDevice.id).jsonl")
+        let cachedDate = try FileManager.default.attributesOfItem(atPath: ledgerURL.path)[.modificationDate] as? Date
+        try overwriteWithInvalidContentPreservingSizeAndDate(url: ledgerURL, date: cachedDate ?? Date())
+        let cached = reader.synchronize(localEvents: [], importedAfter: cutoff)
+        try expect(cached.events.map(\.id) == ["recent"], "windowed sync reuses the full ledger cache")
+        try expect(cached.status.parseErrorCount == 0, "windowed sync does not reparse an unchanged ledger")
     }
 
     static func scannerListsSyncedDeviceOutsideRequestedEventWindow() throws {

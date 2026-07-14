@@ -61,16 +61,19 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         return (readResult.events, status)
     }
 
-    func requiresLocalLedgerRewrite() -> Bool {
+    func requiresLocalLedgerReplacement() -> Bool {
+        guard fileManager.fileExists(atPath: folder.path) else {
+            return false
+        }
         let ledgerURL = localLedgerURL
         guard fileManager.fileExists(atPath: ledgerURL.path),
               let handle = try? FileHandle(forReadingFrom: ledgerURL) else {
-            return false
+            return true
         }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: 256 * 1_024),
               !data.isEmpty else {
-            return false
+            return true
         }
 
         let decoder = Self.jsonDecoder
@@ -106,7 +109,11 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
 
         guard !events.isEmpty else { return 0 }
 
-        let cachedKeys = cachedLedgerKeys(for: syncLedgerSnapshot(for: localLedgerURL))
+        let candidateEvents = events.map { $0.withDevice(localDevice) }
+        let cachedKeys = cachedExistingLedgerKeys(
+            for: syncLedgerSnapshot(for: localLedgerURL),
+            candidates: candidateEvents
+        )
         let existingKeys = cachedKeys
             ?? readIdentityKeys(from: localLedgerURL, isCancelled: isCancelled)
         guard !isCancelled() else { return 0 }
@@ -284,12 +291,12 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
             return incrementalEvents
         }
 
-        let result = readRecords(from: url, importedAfter: importedAfter, isCancelled: isCancelled)
-        let events = deduplicatedEvents(result.records.map(\.tokenEvent))
-        if importedAfter == nil, result.completed, result.parseErrorCount == 0 {
-            cacheLedger(events: events, at: url)
+        let result = readRecords(from: url, importedAfter: nil, isCancelled: isCancelled)
+        let allEvents = deduplicatedEvents(result.records.map(\.tokenEvent))
+        if result.completed, result.parseErrorCount == 0 {
+            cacheLedger(events: allEvents, at: url, expectedSnapshot: snapshot)
         }
-        return (events, result.parseErrorCount)
+        return (events(allEvents, importedAfter: importedAfter), result.parseErrorCount)
     }
 
     private func incrementallyReadLedgerEvents(
@@ -317,24 +324,25 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         let result = readRecords(
             from: url,
             startOffset: base.size,
-            importedAfter: importedAfter,
+            importedAfter: nil,
             isCancelled: isCancelled
         )
         guard !result.requiresFullRead else {
             return nil
         }
 
-        let existingKeys = cachedLedgerKeys(for: baseSnapshot)
+        let appendedEvents = result.records.map(\.tokenEvent)
+        let existingKeys = cachedExistingLedgerKeys(for: baseSnapshot, candidates: appendedEvents)
             ?? Set(cachedEvents.map(eventIdentityKey))
         let newEvents = uniqueNewEvents(
-            from: result.records.map(\.tokenEvent),
+            from: appendedEvents,
             excludingKeys: existingKeys
         )
-        let events = cachedEvents + newEvents
-        if importedAfter == nil, result.completed, result.parseErrorCount == 0 {
-            appendLedgerCache(events: newEvents, at: url)
+        let visibleEvents = cachedEvents + events(newEvents, importedAfter: importedAfter)
+        if result.completed, result.parseErrorCount == 0 {
+            appendLedgerCache(events: newEvents, at: url, expectedSnapshot: snapshot)
         }
-        return (events, result.parseErrorCount)
+        return (visibleEvents, result.parseErrorCount)
     }
 
     private func uniqueNewEvents(from events: [TokenEvent], excludingKeys existingKeys: Set<String>) -> [TokenEvent] {
@@ -361,6 +369,11 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         "\(event.deviceId)|\(event.id)"
     }
 
+    private func events(_ events: [TokenEvent], importedAfter: Date?) -> [TokenEvent] {
+        guard let importedAfter else { return events }
+        return events.filter { $0.timestamp >= importedAfter }
+    }
+
     private func cachedLedgerEvents(
         for snapshot: TokenEventCacheStore.FileSnapshot?,
         importedAfter: Date? = nil
@@ -379,23 +392,52 @@ public final class TokenSyncLedgerStore: @unchecked Sendable {
         return nil
     }
 
-    private func cachedLedgerKeys(for snapshot: TokenEventCacheStore.FileSnapshot?) -> Set<String>? {
+    private func cachedExistingLedgerKeys(
+        for snapshot: TokenEventCacheStore.FileSnapshot?,
+        candidates: [TokenEvent]
+    ) -> Set<String>? {
         guard let snapshot else { return nil }
-        return try? cacheStore?.cachedEventKeys(for: snapshot, originKind: .syncLedger)
+        return try? cacheStore?.cachedExistingEventKeys(
+            for: snapshot,
+            originKind: .syncLedger,
+            candidates: candidates
+        )
     }
 
     private func cacheLedger(records: [SyncLedgerRecord], at url: URL) {
         cacheLedger(events: records.map(\.tokenEvent), at: url)
     }
 
-    private func cacheLedger(events: [TokenEvent], at url: URL) {
-        guard let snapshot = syncLedgerSnapshot(for: url) else { return }
+    private func cacheLedger(
+        events: [TokenEvent],
+        at url: URL,
+        expectedSnapshot: TokenEventCacheStore.FileSnapshot? = nil
+    ) {
+        guard let snapshot = stableSnapshot(for: url, expected: expectedSnapshot) else { return }
         try? cacheStore?.replaceEvents(events, for: snapshot, originKind: .syncLedger)
     }
 
-    private func appendLedgerCache(events: [TokenEvent], at url: URL) {
-        guard let snapshot = syncLedgerSnapshot(for: url) else { return }
+    private func appendLedgerCache(
+        events: [TokenEvent],
+        at url: URL,
+        expectedSnapshot: TokenEventCacheStore.FileSnapshot? = nil
+    ) {
+        guard let snapshot = stableSnapshot(for: url, expected: expectedSnapshot) else { return }
         try? cacheStore?.appendEvents(events, for: snapshot, originKind: .syncLedger)
+    }
+
+    private func stableSnapshot(
+        for url: URL,
+        expected: TokenEventCacheStore.FileSnapshot?
+    ) -> TokenEventCacheStore.FileSnapshot? {
+        guard let current = syncLedgerSnapshot(for: url) else { return nil }
+        guard let expected else { return current }
+        guard current.path == expected.path,
+              current.size == expected.size,
+              current.modifiedAt == expected.modifiedAt else {
+            return nil
+        }
+        return current
     }
 
     private func syncLedgerSnapshot(for url: URL) -> TokenEventCacheStore.FileSnapshot? {

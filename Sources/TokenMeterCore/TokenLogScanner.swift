@@ -26,23 +26,23 @@ public final class TokenLogScanner: @unchecked Sendable {
         isCancelled: () -> Bool = { false }
     ) -> ScanResult {
         guard !isCancelled() else { return ScanResult() }
-        let requiresLocalLogRebuild = (try? cacheStore?.requiresLocalLogRebuild()) ?? false
-        let requiresLocalLedgerRewrite: Bool
+        let localLogPathsRequiringRebuild = (try? cacheStore?.localLogPathsRequiringRebuild()) ?? []
+        let requiresLocalLedgerReplacement: Bool
         if let syncFolder {
-            requiresLocalLedgerRewrite = TokenSyncLedgerStore(
+            requiresLocalLedgerReplacement = TokenSyncLedgerStore(
                 folder: syncFolder,
                 localDevice: localDevice,
                 fileManager: fileManager,
                 cacheStore: cacheStore
-            ).requiresLocalLedgerRewrite()
+            ).requiresLocalLedgerReplacement()
         } else {
-            requiresLocalLedgerRewrite = false
+            requiresLocalLedgerReplacement = false
         }
-        let requiresFullRebuild = requiresLocalLogRebuild || requiresLocalLedgerRewrite
-        let effectiveModifiedAfter = requiresFullRebuild ? nil : modifiedAfter
-        let effectiveEventAfter = requiresFullRebuild ? nil : (eventAfter ?? modifiedAfter)
-
-        let rootScanResult = scanRoots(modifiedAfter: effectiveModifiedAfter, isCancelled: isCancelled)
+        let rootScanResult = scanRoots(
+            modifiedAfter: requiresLocalLedgerReplacement ? nil : modifiedAfter,
+            additionallySelecting: localLogPathsRequiringRebuild,
+            isCancelled: isCancelled
+        )
         guard !isCancelled() else { return ScanResult() }
         var roots = rootScanResult.roots
         if rootScanResult.completed {
@@ -88,11 +88,17 @@ public final class TokenLogScanner: @unchecked Sendable {
         localEvents.append(contentsOf: hermesOutcome.events)
 
         guard !isCancelled() else { return ScanResult() }
+        let replaceLocalLedger = replaceSyncLedger || requiresLocalLedgerReplacement
+        let resultEventAfter = eventAfter ?? modifiedAfter
         let syncOutcome = syncEvents(
-            localEvents: localEventsForSync(freshEvents: localEvents, syncFolder: syncFolder),
+            localEvents: localEventsForSync(
+                freshEvents: localEvents,
+                syncFolder: syncFolder,
+                replaceLocalLedger: replaceLocalLedger
+            ),
             syncFolder: syncFolder,
-            replaceSyncLedger: replaceSyncLedger || requiresFullRebuild,
-            importedAfter: effectiveModifiedAfter,
+            replaceSyncLedger: replaceLocalLedger,
+            importedAfter: resultEventAfter,
             cacheStore: cacheStore,
             isCancelled: isCancelled
         )
@@ -100,14 +106,16 @@ public final class TokenLogScanner: @unchecked Sendable {
         let freshEvents = localEvents + syncOutcome.events
         let events: [TokenEvent]
         if let cachedEvents = cachedEvents(
-            modifiedAfter: effectiveEventAfter,
-            syncLedgerPaths: currentSyncLedgerPaths(in: syncFolder)
+            modifiedAfter: resultEventAfter,
+            // synchronize() already returns the visible ledger events. Loading the
+            // same ledgers again here doubles JSON decoding on every refresh.
+            syncLedgerPaths: nil
         ) {
             events = deduplicated(events: cachedEvents + freshEvents)
         } else {
             events = deduplicated(events: freshEvents)
         }
-        let sourceStatuses = sourceStatuses(from: roots, events: events) + [
+        let sourceStatuses = sourceStatuses(from: roots, events: events, eventAfter: resultEventAfter) + [
             hermesSourceStatus(outcome: hermesOutcome, events: events)
         ]
         let codexFileCount = sourceStatuses
@@ -142,7 +150,8 @@ public final class TokenLogScanner: @unchecked Sendable {
         ), !events.isEmpty else {
             return nil
         }
-        let sourceStatuses = cachedSourceStatuses(from: events) + [cachedHermesSourceStatus(from: events)]
+        let sourceStatuses = cachedSourceStatuses(from: events, eventAfter: eventAfter)
+            + [cachedHermesSourceStatus(from: events)]
         let codexFileCount = sourceStatuses
             .filter { $0.source == .codex }
             .map(\.scannedFileCount)
@@ -259,6 +268,7 @@ public final class TokenLogScanner: @unchecked Sendable {
 
     private func scanRoots(
         modifiedAfter: Date?,
+        additionallySelecting requiredPaths: Set<String>,
         isCancelled: () -> Bool
     ) -> (roots: [RootScan], completed: Bool) {
         var roots: [RootScan] = []
@@ -272,7 +282,11 @@ public final class TokenLogScanner: @unchecked Sendable {
             let enumeration = jsonlFiles(under: root.url, source: root.source, isCancelled: isCancelled)
             completed = completed && enumeration.completed
             let allFiles = enumeration.files
-            let selected = selectedFiles(allFiles, modifiedAfter: modifiedAfter)
+            let selected = selectedFiles(
+                allFiles,
+                modifiedAfter: modifiedAfter,
+                additionallySelecting: requiredPaths
+            )
             roots.append(RootScan(
                 source: root.source,
                 label: root.label,
@@ -323,9 +337,9 @@ public final class TokenLogScanner: @unchecked Sendable {
         )
     }
 
-    private func cachedSourceStatuses(from events: [TokenEvent]) -> [ScanSourceStatus] {
+    private func cachedSourceStatuses(from events: [TokenEvent], eventAfter: Date?) -> [ScanSourceStatus] {
         (codexRoots() + [claudeRoot()]).map { root in
-            let paths = cachedLocalPaths(from: events, under: root)
+            let paths = cachedLocalPaths(from: events, under: root, eventAfter: eventAfter)
             return ScanSourceStatus(
                 source: root.source,
                 label: root.label,
@@ -371,9 +385,17 @@ public final class TokenLogScanner: @unchecked Sendable {
         event.rawFilePath.hasPrefix("hermes://")
     }
 
-    private func sourceStatuses(from roots: [RootScan], events: [TokenEvent]) -> [ScanSourceStatus] {
+    private func sourceStatuses(
+        from roots: [RootScan],
+        events: [TokenEvent],
+        eventAfter: Date?
+    ) -> [ScanSourceStatus] {
         roots.map { root in
-            let contributingCachedFileCount = cachedLocalPaths(from: events, under: root.logRoot).count
+            let contributingCachedFileCount = cachedLocalPaths(
+                from: events,
+                under: root.logRoot,
+                eventAfter: eventAfter
+            ).count
             let scannedFileCount = max(root.selectedFiles.count, contributingCachedFileCount)
             return ScanSourceStatus(
                 source: root.source,
@@ -387,19 +409,34 @@ public final class TokenLogScanner: @unchecked Sendable {
         }
     }
 
-    private func cachedLocalPaths(from events: [TokenEvent], under root: LogRoot) -> Set<String> {
-        Set(events.compactMap { event in
+    private func cachedLocalPaths(
+        from events: [TokenEvent],
+        under root: LogRoot,
+        eventAfter: Date?
+    ) -> Set<String> {
+        let rootPaths = rootPathCandidates(for: root.url)
+        if let cachedOrigins = try? cacheStore?.localLogOriginPaths(modifiedAfter: eventAfter) {
+            return Set(cachedOrigins.compactMap { origin in
+                guard origin.source == root.source,
+                      rawPath(origin.path, isUnder: rootPaths) else {
+                    return nil
+                }
+                return origin.path
+            })
+        }
+
+        return Set(events.compactMap { event in
             guard event.source == root.source,
                   eventHasLocalDetails(event),
-                  rawPath(event.rawFilePath, isUnder: root.url) else {
+                  rawPath(event.rawFilePath, isUnder: rootPaths) else {
                 return nil
             }
             return event.rawFilePath
         })
     }
 
-    private func rawPath(_ path: String, isUnder root: URL) -> Bool {
-        rootPathCandidates(for: root).contains { rootPath in
+    private func rawPath(_ path: String, isUnder rootPaths: Set<String>) -> Bool {
+        rootPaths.contains { rootPath in
             path == rootPath || path.hasPrefix(rootPath + "/")
         }
     }
@@ -576,8 +613,15 @@ public final class TokenLogScanner: @unchecked Sendable {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
-    private func selectedFiles(_ files: [LogFile], modifiedAfter: Date?) -> [LogFile] {
+    private func selectedFiles(
+        _ files: [LogFile],
+        modifiedAfter: Date?,
+        additionallySelecting requiredPaths: Set<String>
+    ) -> [LogFile] {
         let filtered = files.filter { url in
+            if requiredPaths.contains(url.cachePath) {
+                return true
+            }
             if let modifiedAfter {
                 guard url.modificationDate >= modifiedAfter else { return false }
             }
@@ -682,8 +726,12 @@ public final class TokenLogScanner: @unchecked Sendable {
         )
     }
 
-    private func localEventsForSync(freshEvents: [TokenEvent], syncFolder: URL?) -> [TokenEvent] {
-        guard syncFolder != nil else { return freshEvents }
+    private func localEventsForSync(
+        freshEvents: [TokenEvent],
+        syncFolder: URL?,
+        replaceLocalLedger: Bool
+    ) -> [TokenEvent] {
+        guard syncFolder != nil, replaceLocalLedger else { return freshEvents }
         guard let cachedLocalEvents = cachedEvents(modifiedAfter: nil, syncLedgerPaths: nil) else {
             return freshEvents
         }

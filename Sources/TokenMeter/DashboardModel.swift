@@ -111,7 +111,7 @@ enum DashboardBucketSelection: Hashable, Identifiable {
 final class DashboardModel: ObservableObject {
     @Published var scanResult = ScanResult()
     @Published private(set) var selectedSection: DashboardSection = .all
-    @Published private(set) var range: TimeRangePreset = .last24Hours
+    @Published private(set) var range: TimeRangePreset = .last8Hours
     @Published private(set) var bucketSelection: DashboardBucketSelection = .automatic
     @Published private(set) var projectFilter = DashboardModel.allProjectsTitle
     @Published private(set) var modelFilter = DashboardModel.allModelsTitle

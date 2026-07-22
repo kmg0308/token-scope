@@ -101,31 +101,54 @@ struct DashboardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 16) {
-            HStack(spacing: 11) {
-                ZStack {
-                    TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(TokenMeterTheme.accent)
-                }
-                .frame(width: 32, height: 32)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("TokenMeter")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(TokenMeterTheme.primaryText)
-                    Text(headerSubtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(TokenMeterTheme.secondaryText)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                productIdentity
+                Spacer()
+                SectionSelector(selection: model.selectedSection, onSelect: model.selectSection)
+                    .frame(width: 360)
+                headerActions
             }
 
-            Spacer()
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    productIdentity
+                    Spacer(minLength: 4)
+                    headerActions
+                }
+                SectionSelector(selection: model.selectedSection, onSelect: model.selectSection)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .tokenSurface(elevated: true, radius: 18)
+    }
 
-            SectionSelector(selection: model.selectedSection, onSelect: model.selectSection)
-                .frame(width: 360)
+    private var productIdentity: some View {
+        HStack(spacing: 11) {
+            ZStack {
+                TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(TokenMeterTheme.accent)
+            }
+            .frame(width: 32, height: 32)
 
+            VStack(alignment: .leading, spacing: 2) {
+                Text("TokenMeter")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(TokenMeterTheme.primaryText)
+                Text(headerSubtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: 8) {
             Button {
                 model.refresh(restartInProgress: true)
             } label: {
@@ -148,9 +171,6 @@ struct DashboardView: View {
             }
             .buttonStyle(TokenPillButtonStyle(prominent: updates.updateLabel != nil))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .tokenSurface(elevated: true, radius: 18)
     }
 
     private var headerSubtitle: String {
@@ -174,41 +194,16 @@ struct DashboardView: View {
     private var mainSummary: some View {
         let usage = model.totalUsage
         return VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 10) {
-                HStack(spacing: 7) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(model.range.rawValue)
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(TokenMeterTheme.secondaryText)
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .background {
-                    TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 10) {
+                    summaryContextControls
+                    Spacer()
+                    summaryActionControls
                 }
 
-                if model.isSyncConfigured {
-                    devicePicker
-                }
-
-                Spacer()
-
-                Button {
-                    showFullTokenNumbers.toggle()
-                } label: {
-                    Image(systemName: showFullTokenNumbers ? "number.circle.fill" : "number.circle")
-                }
-                .buttonStyle(TokenCompactIconButtonStyle(selected: showFullTokenNumbers))
-                .accessibilityLabel("Show exact token counts with separators")
-
-                if model.isScanning {
-                    HStack(spacing: 7) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("Scanning")
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(TokenMeterTheme.secondaryText)
+                VStack(alignment: .leading, spacing: 8) {
+                    summaryContextControls
+                    summaryActionControls
                 }
             }
 
@@ -232,44 +227,109 @@ struct DashboardView: View {
         .tokenSurface(elevated: true)
     }
 
+    private var summaryContextControls: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 7) {
+                Image(systemName: "clock")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(model.range.rawValue)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(TokenMeterTheme.secondaryText)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background {
+                TokenControlChrome(cornerRadius: TokenMeterTheme.compactControlRadius)
+            }
+
+            if model.isSyncConfigured {
+                devicePicker
+            }
+        }
+    }
+
+    private var summaryActionControls: some View {
+        HStack(spacing: 10) {
+            Button {
+                showFullTokenNumbers.toggle()
+            } label: {
+                Image(systemName: showFullTokenNumbers ? "number.circle.fill" : "number.circle")
+            }
+            .buttonStyle(TokenCompactIconButtonStyle(selected: showFullTokenNumbers))
+            .accessibilityLabel("Show exact token counts with separators")
+
+            if model.isScanning {
+                HStack(spacing: 7) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text("Scanning")
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.secondaryText)
+                .lineLimit(1)
+            }
+        }
+    }
+
     private var summaryLine: some View {
-        HStack(spacing: 18) {
-            switch model.selectedSection {
-            case .all:
-                inlineMetric(
-                    "Codex",
-                    TokenFormatters.tokens(model.totalUsage(source: .codex).total, format: numberFormat),
-                    color: sourceColor(.codex)
-                )
-                inlineMetric(
-                    "Claude Code",
-                    TokenFormatters.tokens(model.totalUsage(source: .claude).total, format: numberFormat),
-                    color: sourceColor(.claude)
-                )
-                inlineMetric("Sessions", TokenFormatters.integer(model.sessionCount))
-            case .codex, .claude:
-                inlineMetric("Sessions", TokenFormatters.integer(model.sessionCount))
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 18) {
+                summaryMetrics
+                Spacer()
             }
-            if model.scanResult.syncStatus.isConfigured {
-                inlineMetric("Devices", TokenFormatters.integer(model.deviceCount))
+
+            VStack(alignment: .leading, spacing: 8) {
+                summaryMetrics
             }
-            Spacer()
         }
         .font(.system(size: 12))
         .foregroundStyle(TokenMeterTheme.secondaryText)
     }
 
-    private var comparisonLine: some View {
-        HStack(spacing: 18) {
+    @ViewBuilder
+    private var summaryMetrics: some View {
+        switch model.selectedSection {
+        case .all:
             inlineMetric(
-                "Previous",
-                TokenFormatters.tokens(model.previousTotalUsage.total, format: numberFormat)
+                "Codex",
+                TokenFormatters.tokens(model.totalUsage(source: .codex).total, format: numberFormat),
+                color: sourceColor(.codex)
             )
-            inlineMetric("Change", comparisonText, color: comparisonColor)
-            Spacer()
+            inlineMetric(
+                "Claude Code",
+                TokenFormatters.tokens(model.totalUsage(source: .claude).total, format: numberFormat),
+                color: sourceColor(.claude)
+            )
+            inlineMetric("Sessions", TokenFormatters.integer(model.sessionCount))
+        case .codex, .claude:
+            inlineMetric("Sessions", TokenFormatters.integer(model.sessionCount))
+        }
+        if model.scanResult.syncStatus.isConfigured {
+            inlineMetric("Devices", TokenFormatters.integer(model.deviceCount))
+        }
+    }
+
+    private var comparisonLine: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 18) {
+                comparisonMetrics
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                comparisonMetrics
+            }
         }
         .font(.system(size: 12))
         .foregroundStyle(TokenMeterTheme.secondaryText)
+    }
+
+    @ViewBuilder
+    private var comparisonMetrics: some View {
+        inlineMetric(
+            "Previous",
+            TokenFormatters.tokens(model.previousTotalUsage.total, format: numberFormat)
+        )
+        inlineMetric("Change", comparisonText, color: comparisonColor)
     }
 
     private var comparisonText: String {
@@ -322,20 +382,34 @@ struct DashboardView: View {
 
     private var chartBlock: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 14) {
-                Text("Usage")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(TokenMeterTheme.primaryText)
-                Spacer()
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 14) {
+                    usageTitle
+                    Spacer()
+                    chartControls
+                }
 
-                HStack(alignment: .center, spacing: 8) {
-                    rangePicker
-                    bucketPicker
+                VStack(alignment: .leading, spacing: 8) {
+                    usageTitle
+                    chartControls
                 }
             }
 
             TokenBarChart(buckets: chartBuckets, range: model.range, bucketInterval: model.bucket, mode: chartMode, numberFormat: numberFormat)
                 .frame(height: 280)
+        }
+    }
+
+    private var usageTitle: some View {
+        Text("Usage")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(TokenMeterTheme.primaryText)
+    }
+
+    private var chartControls: some View {
+        HStack(alignment: .center, spacing: 8) {
+            rangePicker
+            bucketPicker
         }
     }
 
@@ -453,7 +527,11 @@ struct DashboardView: View {
     }
 
     private var filters: some View {
-        HStack(spacing: 18) {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 240), spacing: 18)],
+            alignment: .leading,
+            spacing: 10
+        ) {
             Menu {
                 ForEach(model.projectOptions, id: \.self) { project in
                     menuSelectionButton(shortProject(project), isSelected: model.projectFilter == project) {
@@ -461,10 +539,10 @@ struct DashboardView: View {
                     }
                 }
             } label: {
-                TokenFilterMenuLabel(title: "Project", value: shortProject(model.projectFilter), width: 330)
+                TokenFilterMenuLabel(title: "Project", value: shortProject(model.projectFilter), width: nil)
             }
             .menuStyle(.borderlessButton)
-            .fixedSize()
+            .frame(maxWidth: .infinity)
 
             Menu {
                 ForEach(model.modelOptions, id: \.self) { modelName in
@@ -473,12 +551,10 @@ struct DashboardView: View {
                     }
                 }
             } label: {
-                TokenFilterMenuLabel(title: "Model", value: model.modelFilter, width: 330)
+                TokenFilterMenuLabel(title: "Model", value: model.modelFilter, width: nil)
             }
             .menuStyle(.borderlessButton)
-            .fixedSize()
-
-            Spacer()
+            .frame(maxWidth: .infinity)
         }
         .padding(14)
         .tokenSurface()
@@ -544,20 +620,38 @@ struct DashboardView: View {
     }
 
     private var dataFooter: some View {
-        HStack(spacing: 14) {
-            footerItem("Codex files", model.scanResult.codexFileCount)
-            footerItem("Claude files", model.scanResult.claudeFileCount)
-            footerItem("Events", model.scanResult.events.count)
-            if model.isSyncConfigured {
-                footerItem("Devices", Set(model.scanResult.events.map(\.deviceId)).count)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                footerMetrics
+                Spacer()
+                scanTimestamp
             }
-            footerItem("Errors", model.scanResult.parseErrorCount)
-            Spacer()
-            Text("Scanned \(model.scanResult.scannedAt.formatted(date: .omitted, time: .shortened))")
-                .foregroundStyle(TokenMeterTheme.tertiaryText)
+
+            VStack(alignment: .leading, spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), alignment: .leading)], alignment: .leading, spacing: 6) {
+                    footerMetrics
+                }
+                scanTimestamp
+            }
         }
         .font(.system(size: 11))
         .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private var footerMetrics: some View {
+        footerItem("Codex files", model.scanResult.codexFileCount)
+        footerItem("Claude files", model.scanResult.claudeFileCount)
+        footerItem("Events", model.scanResult.events.count)
+        if model.isSyncConfigured {
+            footerItem("Devices", Set(model.scanResult.events.map(\.deviceId)).count)
+        }
+        footerItem("Errors", model.scanResult.parseErrorCount)
+    }
+
+    private var scanTimestamp: some View {
+        Text("Scanned \(model.scanResult.scannedAt.formatted(date: .omitted, time: .shortened))")
+            .foregroundStyle(TokenMeterTheme.tertiaryText)
     }
 
     private func footerItem(_ title: String, _ value: Int) -> some View {

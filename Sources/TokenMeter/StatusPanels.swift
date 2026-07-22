@@ -40,53 +40,98 @@ struct CodexAccountUsagePanel: View {
     let usage: CodexAccountUsage?
     let isLoading: Bool
     let errorMessage: String?
+    @State private var isCompact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "gauge.with.dots.needle.33percent")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(TokenMeterTheme.accent)
-                Text("Codex limits")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(TokenMeterTheme.primaryText)
-
-                Spacer()
-
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(usage == nil ? "Checking account" : "Refreshing")
-                        .foregroundStyle(TokenMeterTheme.secondaryText)
-                } else if let errorMessage {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(TokenMeterTheme.warning)
-                    Text(usage == nil ? errorMessage : "Could not refresh")
-                        .foregroundStyle(TokenMeterTheme.warning)
-                        .lineLimit(1)
-                        .help(errorMessage)
-                } else if let fetchedAt = usage?.fetchedAt {
-                    Text("Updated \(fetchedAt.formatted(date: .omitted, time: .shortened))")
-                        .foregroundStyle(TokenMeterTheme.tertiaryText)
-                }
+        Group {
+            if isCompact {
+                compactPanel
+            } else {
+                widePanel
             }
-            .font(.system(size: 11))
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear {
+                        isCompact = proxy.size.width < 620
+                    }
+                    .onChange(of: proxy.size.width) { width in
+                        isCompact = width < 620
+                    }
+            }
+        }
+    }
 
+    private var widePanel: some View {
+        panel {
             HStack(alignment: .top, spacing: 0) {
                 limitCell(title: "5 hour", window: usage?.fiveHourWindow)
-
                 panelDivider
-
                 limitCell(title: "7 day", window: usage?.sevenDayWindow)
-
                 panelDivider
-
                 resetCreditCell
+            }
+        }
+    }
+
+    private var compactPanel: some View {
+        panel(topInset: 48) {
+            VStack(alignment: .leading, spacing: 12) {
+                limitCell(title: "5 hour", window: usage?.fiveHourWindow)
+                Divider()
+                limitCell(title: "7 day", window: usage?.sevenDayWindow)
+                Divider()
+                resetCreditCell
+            }
+        }
+    }
+
+    private func panel<Content: View>(
+        topInset: CGFloat = 0,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: topInset)
+            VStack(alignment: .leading, spacing: 12) {
+                panelHeader
+                content()
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .tokenSurface()
+    }
+
+    private var panelHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "gauge.with.dots.needle.33percent")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.accent)
+            Text("Codex limits")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.primaryText)
+
+            Spacer()
+
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                Text(usage == nil ? "Checking account" : "Refreshing")
+                    .foregroundStyle(TokenMeterTheme.secondaryText)
+            } else if let errorMessage {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(TokenMeterTheme.warning)
+                Text(usage == nil ? errorMessage : "Could not refresh")
+                    .foregroundStyle(TokenMeterTheme.warning)
+                    .lineLimit(1)
+                    .help(errorMessage)
+            } else if let fetchedAt = usage?.fetchedAt {
+                Text("Updated \(fetchedAt.formatted(date: .omitted, time: .shortened))")
+                    .foregroundStyle(TokenMeterTheme.tertiaryText)
+            }
+        }
+        .font(.system(size: 11))
     }
 
     private func limitCell(title: String, window: CodexRateLimitWindow?) -> some View {

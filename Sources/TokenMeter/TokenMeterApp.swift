@@ -13,7 +13,7 @@ struct TokenMeterApp: App {
                 .environmentObject(updates)
                 .preferredColorScheme(.dark)
                 .tint(TokenMeterTheme.accent)
-                .frame(minWidth: 900, minHeight: 620)
+                .frame(minWidth: 360, minHeight: 620)
         }
         .commands {
             CommandGroup(replacing: .newItem) {}

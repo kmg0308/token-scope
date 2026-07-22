@@ -138,6 +138,10 @@ final class TokenHostingScrollView<Content: View>: NSScrollView {
 
     var onScrollActivityChanged: ((Bool) -> Void)?
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
     var rootView: Content {
         get { hostingView.rootView }
         set {
@@ -386,7 +390,7 @@ struct TokenMenuLabel: View {
 struct TokenFilterMenuLabel: View {
     let title: String
     let value: String
-    var width: CGFloat = 320
+    var width: CGFloat? = 320
 
     var body: some View {
         HStack(spacing: 8) {
@@ -403,9 +407,10 @@ struct TokenFilterMenuLabel: View {
         }
         .padding(.horizontal, 11)
         .frame(width: width, height: TokenMeterTheme.buttonHeight)
+        .frame(maxWidth: width == nil ? .infinity : nil)
         .background {
             TokenControlChrome()
         }
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize(horizontal: width != nil, vertical: false)
     }
 }

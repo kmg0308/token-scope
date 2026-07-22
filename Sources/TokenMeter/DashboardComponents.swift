@@ -153,26 +153,33 @@ struct ComponentBreakdown: View {
                 .frame(maxWidth: 420, alignment: .leading)
                 .frame(height: 10)
 
-                HStack(spacing: 16) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)],
+                    alignment: .leading,
+                    spacing: 8
+                ) {
                     ForEach(components, id: \.kind) { component in
-                        HStack(spacing: 6) {
-                            Rectangle()
-                                .fill(componentColor(component.kind))
-                                .frame(width: 10, height: 8)
-                            Text(component.kind.rawValue)
-                                .foregroundStyle(TokenMeterTheme.secondaryText)
-                            Text(TokenFormatters.tokens(component.value, format: numberFormat))
-                                .monospacedDigit()
-                                .foregroundStyle(TokenMeterTheme.primaryText)
-                        }
+                        componentLabel(component)
                     }
-                    Spacer()
                 }
                 .font(.system(size: 12))
             }
         }
         .padding(14)
         .tokenSurface()
+    }
+
+    private func componentLabel(_ component: TokenComponent) -> some View {
+        HStack(spacing: 6) {
+            Rectangle()
+                .fill(componentColor(component.kind))
+                .frame(width: 10, height: 8)
+            Text(component.kind.rawValue)
+                .foregroundStyle(TokenMeterTheme.secondaryText)
+            Text(TokenFormatters.tokens(component.value, format: numberFormat))
+                .monospacedDigit()
+                .foregroundStyle(TokenMeterTheme.primaryText)
+        }
     }
 }
 

@@ -1,35 +1,17 @@
-# TokenMeter Agent Guide
+# TokenMeter
 
-This project follows a compact, evidence-first coding style adapted from Andrej Karpathy's public coding-agent guidance.
+Swift로 만든 일반 macOS 앱입니다.
 
-## Working Rules
+## 프로젝트 계약
 
-- Start from the current product behavior, not from a large imagined rewrite.
-- Before editing, identify the smallest file set that can satisfy the request.
-- Prefer deleting stale flexibility over adding new switches or broad abstractions.
-- Keep changes readable in one pass. If a helper does not make the caller simpler, do not add it.
-- Do not preserve dead states just because they once existed in the UI.
-- Treat names shown to users as product surface. Keep app name, bundle name, release asset name, and docs aligned.
-- Keep settings visible near the thing they affect. For example, chart display options belong next to chart controls, not hidden in filters.
+- 앱 표시명, Swift target, 릴리스 산출물 이름은 `TokenMeter`를 사용합니다.
+- 릴리스 ZIP에는 인앱 설치가 기대하는 `TokenMeter.app`을 포함합니다.
+- 메뉴 막대 전용 앱으로 바꾸지 않습니다.
+- 토큰 데이터는 로컬에 보관하며 GitHub 통신은 업데이트 확인과 다운로드에만 사용합니다.
+- 설정은 영향을 주는 UI 가까이에 둡니다.
 
-## Verification Rules
+## 검증
 
-- For core parsing, aggregation, update, packaging, or range behavior, run `./scripts/verify.sh`.
-- For narrow Swift UI or formatter changes, run `swift build` at minimum; prefer `./scripts/verify.sh` before handing off.
-- When changing app identity or packaging, inspect `dist/`, `Info.plist`, and `/Applications` install state.
-- Do not call a task done because a build passed. Check that the build covers the user-facing promise.
-
-## Project Constraints
-
-- App display name is `TokenMeter`.
-- Swift package target names use `TokenMeter`; do not reintroduce the old project name.
-- Release ZIPs must contain `TokenMeter.app` for in-app installation.
-- The app is a normal macOS app, not a menu-bar-only app.
-- Token data stays local. GitHub network calls are only for update checks and update downloads.
-
-## Review Checklist
-
-- Is the requested behavior directly visible in the UI or documented where the user would look?
-- Is any old option, enum case, branch, artifact, or label contradicting the current product?
-- Can a simpler branch, smaller data type, or deleted helper make the behavior easier to trust?
-- Did verification exercise the changed behavior, not just unrelated code?
+- 일반 변경: `./scripts/verify.sh`
+- 좁은 Swift/UI 변경도 최소 `swift build`를 실행합니다.
+- 앱 이름이나 패키징 변경은 `dist/`, `Info.plist`, `/Applications` 설치 상태까지 확인합니다.

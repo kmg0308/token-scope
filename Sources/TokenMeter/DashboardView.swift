@@ -209,7 +209,7 @@ struct DashboardView: View {
 
             HStack(alignment: .lastTextBaseline, spacing: 10) {
                 Text(TokenFormatters.tokens(usage.total, format: numberFormat))
-                    .font(.system(size: showFullTokenNumbers ? 44 : 56, weight: .semibold))
+                    .font(.system(size: showFullTokenNumbers ? 22 : 28, weight: .semibold))
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.62)

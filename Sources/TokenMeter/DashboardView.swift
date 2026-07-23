@@ -5,6 +5,7 @@ import TokenMeterCore
 struct DashboardView: View {
     @EnvironmentObject private var model: DashboardModel
     @EnvironmentObject private var updates: UpdateModel
+    @State private var showingSectionSelector = false
     @State private var showingFilters = false
     @State private var showingDetails = false
     @State private var showingSyncSettings = false
@@ -34,9 +35,6 @@ struct DashboardView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-                .padding(.horizontal, 18)
-                .padding(.top, 14)
-                .padding(.bottom, 8)
             TokenSmoothScrollView(onScrollActivityChanged: model.scrollActivityChanged) {
                 VStack(alignment: .leading, spacing: 18) {
                     CodexAccountUsagePanel(
@@ -101,27 +99,78 @@ struct DashboardView: View {
     }
 
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) {
-                productIdentity
-                Spacer()
-                SectionSelector(selection: model.selectedSection, onSelect: model.selectSection)
-                    .frame(width: 360)
-                headerActions
-            }
-
-            VStack(spacing: 10) {
+        VStack(spacing: 0) {
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) {
                     productIdentity
+                        .fixedSize()
                     Spacer(minLength: 4)
                     headerActions
+                        .fixedSize()
                 }
-                SectionSelector(selection: model.selectedSection, onSelect: model.selectSection)
+
+                HStack(spacing: 10) {
+                    productIdentity
+                        .fixedSize()
+                    Spacer(minLength: 4)
+                    compactHeaderActions
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            .padding(.bottom, showingSectionSelector ? 10 : 12)
+
+            if showingSectionSelector {
+                SectionSelector(selection: model.selectedSection) { section in
+                    model.selectSection(section)
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        showingSectionSelector = false
+                    }
+                }
+                .frame(maxWidth: 420)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .tokenSurface(elevated: true, radius: 18)
+        .background(TokenMeterTheme.surface.opacity(0.88))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(TokenMeterTheme.subtleBorder)
+                .frame(height: 1)
+        }
+    }
+
+    private var compactHeaderActions: some View {
+        HStack(spacing: 6) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    showingSectionSelector.toggle()
+                }
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease")
+            }
+            .accessibilityLabel(showingSectionSelector ? "Hide source filter" : "Show source filter")
+            .help("\(model.selectedSection.rawValue) source filter")
+            .buttonStyle(TokenIconButtonStyle())
+
+            Button {
+                model.refresh(restartInProgress: true)
+            } label: {
+                Image(systemName: model.isScanning ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+            }
+            .accessibilityLabel("Refresh")
+            .buttonStyle(TokenIconButtonStyle())
+
+            Button {
+                updates.isSheetPresented = true
+            } label: {
+                Image(systemName: updates.updateLabel == nil ? "arrow.down.circle" : "arrow.down.circle.fill")
+            }
+            .accessibilityLabel(updates.updateLabel == nil ? "Updates" : "Update available")
+            .buttonStyle(TokenIconButtonStyle(prominent: updates.updateLabel != nil))
+        }
+        .fixedSize()
     }
 
     private var productIdentity: some View {
@@ -134,21 +183,28 @@ struct DashboardView: View {
             }
             .frame(width: 32, height: 32)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("TokenMeter")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(TokenMeterTheme.primaryText)
-                Text(headerSubtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(TokenMeterTheme.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
+            Text("TokenMeter")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(TokenMeterTheme.primaryText)
         }
     }
 
     private var headerActions: some View {
         HStack(spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    showingSectionSelector.toggle()
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(model.selectedSection.rawValue)
+                    Image(systemName: showingSectionSelector ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+            }
+            .accessibilityLabel(showingSectionSelector ? "Hide source filter" : "Show source filter")
+            .buttonStyle(TokenPillButtonStyle())
+
             Button {
                 model.refresh(restartInProgress: true)
             } label: {
@@ -171,20 +227,6 @@ struct DashboardView: View {
             }
             .buttonStyle(TokenPillButtonStyle(prominent: updates.updateLabel != nil))
         }
-    }
-
-    private var headerSubtitle: String {
-        let sectionTitle: String
-        switch model.selectedSection {
-        case .all:
-            sectionTitle = "Combined usage"
-        case .codex:
-            sectionTitle = "Codex sessions"
-        case .claude:
-            sectionTitle = "Claude Code sessions"
-        }
-        guard model.isSyncConfigured else { return sectionTitle }
-        return "\(sectionTitle) - \(model.selectedDeviceTitle)"
     }
 
     private var numberFormat: TokenNumberFormat {

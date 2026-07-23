@@ -15,6 +15,7 @@ struct TokenMeterApp: App {
                 .tint(TokenMeterTheme.accent)
                 .frame(minWidth: 360, minHeight: 620)
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("Data") {
